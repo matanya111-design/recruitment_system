@@ -3,6 +3,7 @@ import { appUsers, aiInstructions } from "@/db/schema";
 import { instructionDefinitions } from "@/lib/ai/instructions";
 import { JOB_PARSING_INSTRUCTIONS, CV_EXTRACTION_INSTRUCTIONS, INTERVIEW_SUMMARY_INSTRUCTIONS } from "@/lib/ai/prompts";
 import { EVALUATION_INSTRUCTIONS, POST_INTERVIEW_EVALUATION_INSTRUCTIONS } from "@/lib/ai/evaluation-prompt";
+import { TEAM_MEETING_SUMMARY_INSTRUCTIONS, TEAM_JOB_MATCH_INSTRUCTIONS, TEAM_MEMBER_ANALYSIS_INSTRUCTIONS, TEAM_EXTRACT_PROFILE_INSTRUCTIONS } from "@/lib/ai/team-prompts";
 import { sql } from "drizzle-orm";
 
 let bootstrapped = false;
@@ -29,6 +30,10 @@ export async function bootstrap() {
     job_parsing: JOB_PARSING_INSTRUCTIONS,
     cv_extraction: CV_EXTRACTION_INSTRUCTIONS,
     interview_summary: INTERVIEW_SUMMARY_INSTRUCTIONS,
+    team_meeting_summary: TEAM_MEETING_SUMMARY_INSTRUCTIONS,
+    team_job_match: TEAM_JOB_MATCH_INSTRUCTIONS,
+    team_member_analysis: TEAM_MEMBER_ANALYSIS_INSTRUCTIONS,
+    team_extract_profile: TEAM_EXTRACT_PROFILE_INSTRUCTIONS,
   };
 
   for (const def of instructionDefinitions) {

@@ -1,8 +1,14 @@
 import { getDb } from "@/db/client";
 import { requireAppIdentity } from "@/lib/auth/identity";
 import { generateStructured, estimateCost } from "@/lib/ai/provider";
-import { aiActivityLogs } from "@/db/schema";
+import { aiActivityLogs, aiInstructions } from "@/db/schema";
 import { sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { TEAM_MEETING_SUMMARY_INSTRUCTIONS, TEAM_JOB_MATCH_INSTRUCTIONS, TEAM_MEMBER_ANALYSIS_INSTRUCTIONS } from "@/lib/ai/team-prompts";
+
+async function getPrompt(key: string, fallback: string): Promise<string> {
+  try { const db = getDb(); const [r] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, key)); return r?.content ?? fallback; } catch { return fallback; }
+}
 
 const meetingSummarySchema = {
   type: "object",
@@ -98,11 +104,7 @@ export async function POST(request: Request) {
 
     const result = await generateStructured<{ summary: string; action_items: string[]; insights: string }>({
       operation: "team_meeting_summary",
-      instructions: `אתה מסייע לניהול שיחות אחד על אחד עם עובדים. בהינתן תמלול או הערות מפגישה, צור:
-
-- summary: סיכום מפורט ומלא של הפגישה. שמור על כל המידע המהותי — מה עלה, מה נאמר, איפה העובד מקצועית ואישית, יעדים, בעיות, החלטות. כתוב בעברית טבעית בפסקאות קצרות. אל תמציא ואל תשמיט מידע. ללא Markdown (ללא **, *, #).
-- action_items: רשימת משימות קונקרטיות שעלו מהפגישה — כל פריט הוא פעולה ספציפית עם בעלים ברורה. ריק אם לא היו.
-- insights: תובנות על העובד — חוזקות, אתגרים, מוטיבציה, כיוון מקצועי. 2-3 משפטים, ישירים ומעשיים. ללא Markdown.`,
+      instructions: await getPrompt("team_meeting_summary", TEAM_MEETING_SUMMARY_INSTRUCTIONS),
       input: `תמלול/הערות הפגישה:\n${body.transcript}`,
       schemaName: "meeting_summary",
       jsonSchema: meetingSummarySchema,
@@ -147,10 +149,7 @@ export async function POST(request: Request) {
 
     const result = await generateStructured<{ matches: Array<{ job_title: string; client: string; fit_score: number; reason: string }>; analysis: string }>({
       operation: "team_job_match",
-      instructions: `אתה מסייע לחיפוש משרות מתאימות לעובד בחברה, על סמך פרופיל ופגישות אישיות. 
-העבר עד 3 משרות המתאימות ביותר עם ציון התאמה (0-100) והסבר קצר. 
-ב-analysis כתוב תובנה על הפרופיל המקצועי של העובד ביחס למשרות שיש. 
-אם אין התאמה טובה — אמור זאת ישירות.`,
+      instructions: await getPrompt("team_job_match", TEAM_JOB_MATCH_INSTRUCTIONS),
       input,
       schemaName: "team_job_match",
       jsonSchema: jobMatchSchema,
@@ -190,8 +189,7 @@ export async function POST(request: Request) {
 
     const result = await generateStructured<{ strengths: string[]; gaps: string[]; growth_recommendation: string; next_steps: string[] }>({
       operation: "team_member_analysis",
-      instructions: `אתה מסייע למנהל לנתח עובד בצוות על סמך פגישות 1:1. 
-צור ניתוח מעשי: חוזקות, פערים/אתגרים, המלצת קידום מקצועי, וצעדים הבאים. עברית טבעית.`,
+      instructions: await getPrompt("team_member_analysis", TEAM_MEMBER_ANALYSIS_INSTRUCTIONS),
       input: `עובד: ${body.memberName}\n\nסיכומי פגישות:\n${body.memberNotes || "אין סיכומים עדיין"}`,
       schemaName: "member_analysis",
       jsonSchema: analyzeSchema,

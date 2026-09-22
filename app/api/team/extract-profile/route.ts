@@ -1,7 +1,9 @@
 import { requireAppIdentity } from "@/lib/auth/identity";
 import { generateStructured, estimateCost } from "@/lib/ai/provider";
 import { getDb } from "@/db/client";
-import { aiActivityLogs } from "@/db/schema";
+import { aiActivityLogs, aiInstructions } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { TEAM_EXTRACT_PROFILE_INSTRUCTIONS } from "@/lib/ai/team-prompts";
 
 const schema = {
   type: "object",
@@ -24,13 +26,13 @@ export async function POST(request: Request) {
   if (!text?.trim()) return Response.json({ error: "טקסט ריק" }, { status: 400 });
 
   try {
+    const db = getDb();
+    const [savedInst] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, "team_extract_profile")).catch(() => []);
+    const instructions = savedInst?.content ?? TEAM_EXTRACT_PROFILE_INSTRUCTIONS;
+
     const result = await generateStructured<{ name: string; notes: string }>({
       operation: "team_extract_profile",
-      instructions: `אתה מחלץ פרטי עובד מטקסט גולמי ובונה פרופיל מקצועי מסודר.
-
-החזר:
-- name: שם מלא של האדם. חלץ מהטקסט. אם לא ברור — החזר מחרוזת ריקה.
-- notes: פרופיל מקצועי מסודר בעברית. ארגן תחת כותרות קצרות רלוונטיות בלבד כגון "תפקיד ורקע:", "ניסיון מקצועי:", "כיוון מקצועי:", "מצב נוכחי:", "מה הביא לפגישה:". כל כותרת מסתיימת בנקודתיים. פסקאות קצרות, טקסט טבעי. שמור על כל המידע. אל תמציא. ללא Markdown.`,
+      instructions,
       input: `${nameHint ? `רמז לשם: ${nameHint}\n\n` : ""}טקסט גולמי:\n${text}`,
       schemaName: "team_profile_extraction",
       jsonSchema: schema,
@@ -38,7 +40,6 @@ export async function POST(request: Request) {
     });
 
     const cost = estimateCost(result.model, result.usage);
-    const db = getDb();
     await db.insert(aiActivityLogs).values({
       actionType: "חילוץ פרופיל עובד",
       subjectType: "team_member",
