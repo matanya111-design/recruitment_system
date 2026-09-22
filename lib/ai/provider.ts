@@ -21,33 +21,50 @@ export async function generateStructured<T>(args: AiGenerateArgs): Promise<AiRes
 
   const model = process.env.OPENAI_MODEL ?? "gpt-5.6-terra";
   const reasoningEffort = args.reasoningEffort ?? (process.env.OPENAI_REASONING_EFFORT as "low" | "medium" | "high") ?? "medium";
+  // CodeMie proxy uses OpenAI-compatible /chat/completions; native OpenAI uses /responses
+  const baseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
+  const isProxy = !!process.env.OPENAI_BASE_URL;
 
-  const body: Record<string, unknown> = {
-    model,
-    store: false,
-    reasoning: { effort: reasoningEffort },
-    input: [
-      { role: "system", content: args.instructions },
-      { role: "user", content: args.input },
-    ],
-    text: {
-      format: {
+  let response: Response;
+
+  if (isProxy) {
+    // Chat Completions format (OpenAI-compatible proxies: CodeMie, Azure, Anthropic via proxy)
+    const body = {
+      model,
+      messages: [
+        { role: "system", content: args.instructions },
+        { role: "user", content: args.input },
+      ],
+      response_format: {
         type: "json_schema",
-        name: args.schemaName,
-        schema: args.jsonSchema,
-        strict: true,
+        json_schema: { name: args.schemaName, schema: args.jsonSchema, strict: true },
       },
-    },
-  };
-
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+    };
+    response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } else {
+    // Native OpenAI Responses API
+    const body: Record<string, unknown> = {
+      model,
+      store: false,
+      reasoning: { effort: reasoningEffort },
+      input: [
+        { role: "system", content: args.instructions },
+        { role: "user", content: args.input },
+      ],
+      text: {
+        format: { type: "json_schema", name: args.schemaName, schema: args.jsonSchema, strict: true },
+      },
+    };
+    response = await fetch(`${baseUrl}/responses`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
 
   if (!response.ok) {
     const err = await response.text().catch(() => response.statusText);
@@ -56,19 +73,26 @@ export async function generateStructured<T>(args: AiGenerateArgs): Promise<AiRes
 
   const raw = await response.json() as Record<string, unknown>;
   const usage = raw.usage as Record<string, unknown> | undefined;
-  const inputTokens = Number(usage?.input_tokens ?? 0);
-  const outputTokens = Number(usage?.output_tokens ?? 0);
+  const inputTokens = Number(usage?.input_tokens ?? (usage?.prompt_tokens ?? 0));
+  const outputTokens = Number(usage?.output_tokens ?? (usage?.completion_tokens ?? 0));
   const inputDetails = usage?.input_tokens_details as Record<string, unknown> | undefined;
   const cachedTokens = Number(inputDetails?.cached_tokens ?? 0);
 
-  // Extract text content from response
-  const output = raw.output as Array<Record<string, unknown>> | undefined;
-  const textContent = output?.find((o) => o.type === "message");
-  const contentArr = textContent?.content as Array<Record<string, unknown>> | undefined;
-  const textItem = contentArr?.find((c) => c.type === "output_text");
-  const textValue = textItem?.text as string | undefined;
+  // Support both OpenAI Responses API and Chat Completions formats
+  let textValue: string | undefined;
+  if (isProxy) {
+    // Chat Completions: choices[0].message.content
+    const choices = raw.choices as Array<Record<string, unknown>> | undefined;
+    textValue = (choices?.[0]?.message as Record<string, unknown> | undefined)?.content as string | undefined;
+  } else {
+    // Responses API: output[].content[].text
+    const output = raw.output as Array<Record<string, unknown>> | undefined;
+    const textContent = output?.find((o) => o.type === "message");
+    const contentArr = textContent?.content as Array<Record<string, unknown>> | undefined;
+    textValue = contentArr?.find((c) => c.type === "output_text")?.text as string | undefined;
+  }
 
-  if (!textValue) throw new Error("No text output from OpenAI response");
+  if (!textValue) throw new Error("No text output from AI response");
 
   const data = JSON.parse(textValue) as T;
 
