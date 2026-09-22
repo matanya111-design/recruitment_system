@@ -253,6 +253,7 @@ export async function PATCH(request: Request) {
       const strFields: [string, keyof typeof applications.$inferInsert][] = [
         ["status", "status"], ["interviewSummary", "interviewSummary"],
         ["nextAction", "nextAction"], ["nextActionDate", "nextActionDate"],
+        ["evaluationFeedback", "evaluationFeedback"],
       ];
       for (const [k, col] of strFields) if (k in body) updates[col] = body[k];
       if ("interviewDate" in body) updates.interviewDate = body.interviewDate ? new Date(body.interviewDate as string) : null;
