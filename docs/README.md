@@ -30,6 +30,8 @@ OPENAI_MODEL=claude-sonnet-4-6
 
 להחלפה ל-OpenAI ישיר — הסר את `OPENAI_BASE_URL` ושים `OPENAI_API_KEY` אמיתי.
 
+**הערת תאימות:** Claude דרך Bedrock/LiteLLM אינו תומך ב-`minimum`/`maximum` על `integer` ב-JSON Schema strict. כל ה-schemas בפרויקט כבר תוקנו.
+
 ## מה הוחלף לעומת המקור
 
 | מקור (ChatGPT Sites) | כאן |
@@ -195,7 +197,7 @@ npm run db:migrate   # הרצת migrations
 | מדריך | הסבר מעשי על זרימת העבודה |
 | פעילות AI | יומן קריאות AI + עלות משוערת |
 | שאילתות AI | שאל כל שאלה על המערכת |
-| ניהול צוות | ישות לכל עובד — סיכום, action items, matching AI |
+| ניהול צוות | רשימה מתקפלת — לחיצה על עובד פותחת: ציר זמן פגישות, הוספת פגישה עם AI summary, התאמת משרות + ניתוח AI (נשמר לDB) |
 | משתמשים | Admin בלבד — allowlist ותפקידים |
 | הוראות AI | Admin בלבד — עריכת פרומפטים |
 

@@ -3230,6 +3230,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
   member: TeamMember; jobs: Job[];
   onEdit: () => void; onDelete: () => void; onRefresh: () => void;
 }) {
+  const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"timeline"|"meeting"|"insight">("timeline");
   const [meetings, setMeetings] = useState<TeamMeeting[]>([]);
   const [meetingsLoaded, setMeetingsLoaded] = useState(false);
@@ -3308,25 +3309,31 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
     }).finally(() => setAiRunning(false));
   }
 
+  const initials = member.name.split(" ").map((w:string)=>w[0]).join("").slice(0,2);
+  const meetingCount = member.aiInsightUpdatedAt ? "✓" : "";
   return (
-    <section className="panel content-card" style={{marginBottom:14}}>
-      {/* Profile header — always visible */}
-      <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:14,paddingBottom:14,borderBottom:"1px solid var(--line)"}}>
-        <div className="avatar violet" style={{width:44,height:44,borderRadius:"50%",display:"grid",placeItems:"center",fontWeight:800,fontSize:15,flexShrink:0}}>
-          {member.name.split(" ").map((w:string)=>w[0]).join("").slice(0,2)}
+    <section className="panel content-card" style={{marginBottom:8}}>
+      {/* Collapsed header row — always visible */}
+      <div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer"}} onClick={()=>setOpen(o=>!o)}>
+        <div className="avatar violet" style={{width:38,height:38,borderRadius:"50%",display:"grid",placeItems:"center",fontWeight:800,fontSize:14,flexShrink:0}}>
+          {initials}
         </div>
         <div style={{flex:1}}>
-          <b style={{fontSize:17}}>{member.name}</b>
-          {member.notes && (
-            <div style={{marginTop:6}}>
-              <ReadableInterviewSummary text={member.notes} />
-            </div>
-          )}
+          <b style={{fontSize:15}}>{member.name}</b>
+          {!open && member.notes && <span style={{fontSize:12,color:"var(--muted)",marginRight:8}}>{member.notes.replace(/[*#\n]/g,"").slice(0,60)}{member.notes.length>60?"...":""}</span>}
         </div>
-        <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
-          <button className="secondary" style={{fontSize:11}} onClick={onEdit}>עריכה</button>
+        {meetingCount && <span style={{fontSize:11,color:"var(--green)",fontWeight:700}}>AI ✓</span>}
+        <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
+          <button className="secondary" style={{fontSize:11,padding:"4px 9px"}} onClick={onEdit}>עריכה</button>
           <button className="danger-text-button" style={{fontSize:11}} onClick={onDelete}>מחיקה</button>
         </div>
+        <span style={{color:"var(--muted)",fontSize:14,marginRight:4}}>{open?"▲":"▼"}</span>
+      </div>
+
+      {/* Expanded content */}
+      {open && <>
+      <div style={{marginTop:14,paddingTop:14,borderTop:"1px solid var(--line)"}}>
+        {member.notes && <ReadableInterviewSummary text={member.notes} />}
       </div>
 
       <div className="tabs" style={{marginTop:0,marginBottom:12}}>
@@ -3458,6 +3465,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
           )}
         </div>
       )}
+      </>}
     </section>
   );
 }
