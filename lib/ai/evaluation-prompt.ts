@@ -103,7 +103,7 @@ export const evaluationSchema = {
   required: ["gate_status","score","fit_label","recommendation","bottom_line","executive_summary","strengths","gaps","uncertainties","questions","technology_fit","experience_fit","risks","cv_changes_needed","cv_change_recommendations","generalizable_feedback","proposed_engine_rule","recruitment_email"],
   properties: {
     gate_status: { type: "string", enum: ["עבר את שער ההתאמה","לא רלוונטי לתפקיד"] },
-    score: { type: "integer", minimum: 0, maximum: 100 },
+    score: { type: "integer" },
     fit_label: { type: "string", enum: ["מתאים","מתאים חלקית","גבולי","לא מתאים","לא רלוונטי לתפקיד"] },
     recommendation: { type: "string", enum: ["להתקדם לראיון מקצועי","להתקדם בכפוף לבירור","לא להתקדם","להעביר ללקוח","להעביר ללקוח בכפוף להשלמה","לא להעביר ללקוח"] },
     bottom_line: { type: "string" },

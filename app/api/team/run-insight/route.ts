@@ -12,7 +12,7 @@ const jobMatchSchema = {
   type: "object", additionalProperties: false,
   required: ["matches", "analysis"],
   properties: {
-    matches: { type: "array", items: { type: "object", additionalProperties: false, required: ["job_title","client","fit_score","reason"], properties: { job_title:{type:"string"}, client:{type:"string"}, fit_score:{type:"integer",minimum:0,maximum:100}, reason:{type:"string"} } } },
+    matches: { type: "array", items: { type: "object", additionalProperties: false, required: ["job_title","client","fit_score","reason"], properties: { job_title:{type:"string"}, client:{type:"string"}, fit_score:{type:"integer"}, reason:{type:"string"} } } },
     analysis: { type: "string" },
   },
 } as const;

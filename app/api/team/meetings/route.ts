@@ -29,7 +29,7 @@ const jobMatchSchema = {
         properties: {
           job_title: { type: "string" },
           client: { type: "string" },
-          fit_score: { type: "integer", minimum: 0, maximum: 100 },
+          fit_score: { type: "integer" },
           reason: { type: "string" },
         },
       },
