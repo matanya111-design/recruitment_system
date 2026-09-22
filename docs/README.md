@@ -1,20 +1,34 @@
-# מערכת ניהול והערכת מועמדים — תיעוד מלא
+# מערכת ניהול והערכת מועמדים — NAYA Tech Recruitment System
+
+> גרסה: 2.0 | Branch: `dev` | עודכן: ספטמבר 2026
 
 ## מה זה?
 
-מערכת Web פנימית לניהול תהליכי גיוס טכנולוגיים. הוקמה כהעתקה מקומית מלאה של `tech-candidate-manager` שרץ על ChatGPT Sites עם Cloudflare. כל ה-Infrastructure הוחלף ב-adapters מקומיים.
+מערכת Web פנימית לניהול תהליכי גיוס טכנולוגי ב-NAYA. הוקמה כהעתקה מקומית מלאה של `tech-candidate-manager` שרץ על ChatGPT Sites עם Cloudflare. כל ה-Infrastructure הוחלף ב-adapters מקומיים — PostgreSQL, MinIO, iron-session.
 
 ## Stack
 
 | שכבה | טכנולוגיה |
 |---|---|
 | Frontend | Next.js 15 App Router, React 19, Tailwind CSS 4 |
-| Backend | Next.js API Routes (Edge-compatible) |
+| Backend | Next.js API Routes |
 | Database | PostgreSQL 16 via Drizzle ORM |
 | Storage | MinIO (dev) / AWS S3-compatible (prod) |
 | Auth | iron-session cookie + DB allowlist |
-| AI | OpenAI Responses API with Structured Outputs |
-| Container | Docker Compose |
+| AI | CodeMie Proxy (claude-sonnet-4-6) / OpenAI Responses API |
+| Container | Docker Compose עם `restart: unless-stopped` |
+
+## חיבור AI
+
+המערכת מחוברת ל-**CodeMie Proxy** של EPAM — משתמשת בחשבון הארגוני שלך:
+
+```
+OPENAI_BASE_URL=http://127.0.0.1:4001/v1
+OPENAI_API_KEY=codemie-proxy
+OPENAI_MODEL=claude-sonnet-4-6
+```
+
+להחלפה ל-OpenAI ישיר — הסר את `OPENAI_BASE_URL` ושים `OPENAI_API_KEY` אמיתי.
 
 ## מה הוחלף לעומת המקור
 
@@ -37,22 +51,26 @@ recruitment_system/
 │   │   ├── recruiting/         # CRUD ראשי (jobs/candidates/applications)
 │   │   ├── cv/                 # העלאת PDF + חילוץ
 │   │   │   └── ai/             # חילוץ AI
-│   │   ├── evaluate/           # הערכת AI
+│   │   ├── evaluate/           # הערכת AI (pre + post interview)
 │   │   ├── interview/summarize/ # סיכום ראיון AI
 │   │   ├── jobs/parse/ & refine/ # יצירת משרה מטקסט
+│   │   ├── ai-chat/            # המשך שיח עם AI על מייל גיוס
+│   │   ├── ai-general/         # שאילתות AI כלליות + team matching
+│   │   ├── team/               # CRUD ניהול צוות
 │   │   └── health/             # live + ready health checks
 │   ├── page.tsx                # SPA React (UI מלא)
 │   ├── layout.tsx              # HTML root
 │   └── globals.css             # כל ה-CSS (RTL, components)
 │
 ├── db/                         # Database layer
-│   ├── schema.ts               # Drizzle schema (8 טבלאות)
-│   └── client.ts               # PostgreSQL connection pool
+│   ├── schema.ts               # Drizzle schema (8 טבלאות + team_members)
+│   ├── client.ts               # PostgreSQL connection pool
+│   └── migrations/             # SQL migrations (Drizzle Kit)
 │
 ├── lib/                        # Business logic
 │   ├── ai/                     # AI provider, prompts, schemas
-│   │   ├── provider.ts         # OpenAI Responses API adapter
-│   │   ├── evaluation-prompt.ts # פרומפטים הערכת מועמד
+│   │   ├── provider.ts         # Dual-mode adapter (Responses API + Chat Completions)
+│   │   ├── evaluation-prompt.ts # פרומפטים הערכת מועמד (NAYA context)
 │   │   ├── prompts.ts          # יתר הפרומפטים (CV, Job, Interview)
 │   │   └── instructions.ts     # instructionDefinitions
 │   ├── auth/                   # Authentication
@@ -63,17 +81,18 @@ recruitment_system/
 │   │   └── client.ts           # S3/MinIO adapter
 │   └── audit.ts                # כתיבת audit_logs
 │
-├── drizzle/                    # SQL migrations
+├── db/migrations/              # SQL migrations (Drizzle Kit)
 ├── scripts/                    # כלי פיתוח
 │   ├── migrate.ts              # הרצת DB migrations
-│   └── import-export.ts        # Import מ-JSON export של המקור
+│   ├── import-export.ts        # Import מ-JSON export של המקור
+│   └── start-docker.ps1        # הפעלת Docker אוטומטית עם Windows
 │
 ├── docs/                       # תיעוד
 │   ├── README.md               # מסמך זה
 │   ├── spec-he.md              # מפרט מקורי מלא (עברית)
 │   └── source-v37.zip          # קוד מקור המערכת המקורית
 │
-├── docker-compose.yml          # postgres + minio + minio-init + web
+├── docker-compose.yml          # postgres + minio + minio-init + web (restart: unless-stopped)
 ├── Dockerfile                  # Multi-stage build (non-root)
 ├── .env.example                # Template למשתני סביבה
 └── .env.local                  # ערכים מקומיים (לא ב-Git)
@@ -88,7 +107,7 @@ recruitment_system/
 ### שלבים
 
 ```powershell
-# 1. הורד את הפרויקט
+# 1. כנס לתיקיית הפרויקט
 cd C:\Users\MatanyaVinograd\my_project\recruitment_system
 
 # 2. העתק קובץ משתני הסביבה ומלא ערכים
@@ -112,26 +131,33 @@ npm run dev
 # פתח: http://localhost:3000
 ```
 
-### הקמה ב-Docker (production)
+### הקמה ב-Docker מלא (production)
 
 ```powershell
 docker compose up --build
 ```
 
-## משתני סביבה — מה חסר ומה צריך למלא
+### הפעלה אוטומטית עם Windows
 
-ערוך את `.env.local`. סעיפים המסומנים ⚠️ **חובה** לפני הפעלה:
+Docker Desktop רשום ב-Windows Startup. בנוסף, קובץ `start-recruitment-docker.vbs` נמצא בתיקיית ה-Startup של Windows ומריץ `docker compose up -d` אוטומטית 20 שניות לאחר כניסה למחשב.
+
+## משתני סביבה
+
+ערוך את `.env.local`:
 
 | משתנה | סטטוס | הסבר |
 |---|---|---|
-| `DATABASE_URL` | ✅ מוגדר | מחובר ל-Docker postgres |
-| `SESSION_SECRET` | ⚠️ **שנה!** | צור מחרוזת 32 ביית: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `APP_OWNER_EMAIL` | ✅ מוגדר | `Matanya_Vinograd@epam.com` |
-| `OPENAI_API_KEY` | ⚠️ **חסר!** | הוסף מפתח מ-https://platform.openai.com |
-| `OPENAI_MODEL` | ✅ | `gpt-5.6-terra` |
-| `S3_ENDPOINT` | ✅ | מחובר ל-Docker MinIO |
-| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | ⚠️ **שנה ב-Production** | ב-dev: `minioadmin` / `change-me` |
-| `APP_BASE_URL` | ✅ dev | שנה ל-domain האמיתי ב-Production |
+| `DATABASE_URL` | ✅ | `postgresql://app:change-me@localhost:5432/candidate_manager` |
+| `SESSION_SECRET` | ✅ | נוצר אקראי (32 bytes hex) |
+| `APP_OWNER_EMAIL` | ✅ | `Matanya_Vinograd@epam.com` |
+| `OPENAI_API_KEY` | ✅ | `codemie-proxy` (CodeMie local proxy) |
+| `OPENAI_BASE_URL` | ✅ | `http://127.0.0.1:4001/v1` (CodeMie proxy endpoint) |
+| `OPENAI_MODEL` | ✅ | `claude-sonnet-4-6` |
+| `S3_ENDPOINT` | ✅ | `http://localhost:9000` (MinIO) |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | ⚠️ שנה ב-Production | ב-dev: `minioadmin` / `change-me` |
+| `DATABASE_URL` password | ⚠️ שנה ב-Production | כרגע `change-me` |
+
+**להחלפה ל-OpenAI ישיר:** הסר את `OPENAI_BASE_URL`, שנה `OPENAI_API_KEY` למפתח אמיתי, שנה `OPENAI_MODEL` ל-`gpt-4.1` או `o3`.
 
 ## פקודות שימושיות
 
@@ -141,42 +167,72 @@ npm run build        # בניית Production
 npm run typecheck    # TypeScript ללא הרצה
 npm run db:generate  # יצירת migration מ-schema
 npm run db:migrate   # הרצת migrations
-npm run db:seed      # נתוני demo (dev בלבד)
 ```
 
-## מסד הנתונים — 8 טבלאות
+## מסד הנתונים — טבלאות
 
 | טבלה | תפקיד |
 |---|---|
-| `app_users` | Allowlist משתמשים + roles |
-| `jobs` | משרות |
-| `candidates` | מועמדים + metadata קורות חיים |
-| `applications` | שיוך מועמד↔משרה + ציון + הערכה |
-| `ai_activity_logs` | יומן כל קריאות AI + עלות |
+| `app_users` | Allowlist משתמשים + roles (admin/user) |
+| `jobs` | משרות — דרישות, לקוח, סטטוס, טכנולוגיות |
+| `candidates` | מועמדים — פרטים, קורות חיים, חוות דעת מגייס |
+| `applications` | שיוך מועמד↔משרה + סטטוס, ראיון, הערכה |
+| `ai_activity_logs` | יומן כל קריאות AI — מודל, טוקנים, עלות |
 | `ai_instructions` | פרומפטים ניתנים לעריכה ע"י Admin |
 | `evaluation_rules` | כללי כיול רוחביים מאושרים |
 | `audit_logs` | Audit trail לפעולות רגישות |
+| `team_members` | חברי צוות — סיכום שיחה, action items, משרות מסומנות |
 
-## AI — זרימת עבודה
+## לוחות הניווט
 
-כל קריאת AI **יוצאת מהשרת בלבד** (לעולם לא מהדפדפן):
+| טאב | מה עושים שם |
+|---|---|
+| לוח בקרה | סטטוס כללי, משימות פתוחות, מועמדים אחרונים |
+| משרות | רשימה עם מיון, יצירה ידנית / מ-AI |
+| מועמדים | רשימה עם מיון, חיפוש וסינון |
+| מועמד (דף פנימי) | 4 טאבים: סקירה / קורות חיים / ראיון / הערכה לפני+אחרי |
+| ארכיון | משרות ומועמדויות מורדות, עם שחזור |
+| מדריך | הסבר מעשי על זרימת העבודה |
+| פעילות AI | יומן קריאות AI + עלות משוערת |
+| שאילתות AI | שאל כל שאלה על המערכת |
+| ניהול צוות | ישות לכל עובד — סיכום, action items, matching AI |
+| משתמשים | Admin בלבד — allowlist ותפקידים |
+| הוראות AI | Admin בלבד — עריכת פרומפטים |
+
+## זרימת עבודה — מועמד בתהליך
 
 ```
-Client → POST /api/evaluate
-           ↓
-        requireAppIdentity()
-           ↓
-        Load prompt from DB (fallback: file)
-           ↓
-        OpenAI Responses API (structured output + strict JSON Schema)
-           ↓
-        Validate with Zod
-           ↓
-        Save to applications.evaluation_json
-           ↓
-        Write ai_activity_logs (tokens + cost estimate)
-           ↓
-        Return to client
+משרה פעילה
+    ↓
+יצירת מועמד + שיוך למשרה
+    ↓
+העלאת PDF → חילוץ טקסט → אישור פרטים
+    ↓
+הערכה לפני ראיון (AI) → שאלות לראיון + מייל גיוס
+    ↓ (אישור לראיון)
+תמלול ראיון → AI מכין טיוטה → אישור סיכום
+    ↓
+הערכה לאחר ראיון (AI) → להעביר ללקוח / לא להעביר
+    ↓
+עדכון סטטוס → הפסיק תהליך / התקבל / הועבר ללקוח
+```
+
+## AI Provider — איך זה עובד
+
+ה-provider ב-`lib/ai/provider.ts` תומך בשני פורמטים:
+
+- **ללא `OPENAI_BASE_URL`**: Native OpenAI Responses API
+- **עם `OPENAI_BASE_URL`**: Chat Completions format (לכל proxy: CodeMie, Azure, Anthropic)
+
+```
+Client → API Route
+           ↓ requireAppIdentity()
+           ↓ Load prompt from DB (fallback: lib/ai/*.ts)
+           ↓ generateStructured() → CodeMie Proxy / OpenAI
+           ↓ Parse JSON response
+           ↓ Save to DB
+           ↓ Write ai_activity_logs
+           ↓ Return to client
 ```
 
 ## הוספת משתמש חדש
