@@ -40,18 +40,25 @@ export async function POST(request: Request) {
 
   const db = getDb();
 
-  // Load member + meetings + jobs in parallel
+  type QR = { rows: Record<string, unknown>[] };
+  const toRows = (r: unknown): Record<string, unknown>[] => {
+    try { return (r as QR).rows ?? []; } catch { return []; }
+  };
+
+  // Ensure team_meetings exists before querying it
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS team_meetings (id BIGSERIAL PRIMARY KEY, member_id BIGINT NOT NULL, meeting_date TIMESTAMPTZ NOT NULL DEFAULT NOW(), raw_transcript TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', action_items JSONB NOT NULL DEFAULT '[]', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+
   const [memberRow, meetingRows, jobRows] = await Promise.all([
     db.execute(sql`SELECT id, name, notes FROM team_members WHERE id=${memberId}`),
-    db.execute(sql`SELECT summary, meeting_date FROM team_meetings WHERE member_id=${memberId} ORDER BY meeting_date DESC LIMIT 10`).catch(() => ({ rows: [] } as { rows: Record<string, unknown>[] })),
+    db.execute(sql`SELECT summary, meeting_date FROM team_meetings WHERE member_id=${memberId} ORDER BY meeting_date DESC LIMIT 10`).catch(() => ({ rows: [] })),
     db.execute(sql`SELECT id, title, client, technologies FROM jobs WHERE archived=false ORDER BY updated_at DESC LIMIT 20`),
   ]);
 
-  const member = (memberRow as unknown as { rows: Record<string, unknown>[] }).rows[0];
+  const member = toRows(memberRow)[0];
   if (!member) return Response.json({ error: "עובד לא נמצא" }, { status: 404 });
 
-  const meetings = (meetingRows as unknown as { rows: Record<string, unknown>[] }).rows;
-  const jobs = (jobRows as unknown as { rows: Record<string, unknown>[] }).rows;
+  const meetings = toRows(meetingRows);
+  const jobs = toRows(jobRows);
 
   const allSummaries = meetings.map(m => `[${String(m.meeting_date ?? "").slice(0,10)}] ${m.summary}`).join("\n\n");
   const context = `${member.notes || ""}\n\nסיכומי פגישות:\n${allSummaries || "אין עדיין"}`.trim();
