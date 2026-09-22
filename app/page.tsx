@@ -3494,12 +3494,10 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
     if (rawText.trim().length < 20) { setExtractErr("יש להדביק לפחות 20 תווים"); return; }
     setExtracting(true); setExtractErr("");
     try {
-      const r = await fetch("/api/ai-general", { method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ systemPrompt: `אתה עוזר למנהל גיוס לבנות פרופיל עובד מובנה וקריא בעברית. כתוב פסקאות קצרות תחת כותרות ברורות כמו "תפקיד ורקע:", "ניסיון מקצועי:", "כיוון מקצועי:", "מצב נוכחי:", "מה הביא לפגישה:" — רק כותרות שרלוונטיות לתוכן. שמור על כל המידע שקיים בקלט. אל תמציא, אל תסיק מעבר לנאמר. אל תשתמש ב-Markdown (ללא **, *, # וכו'). טקסט טבעי ישיר בעברית.`, query: rawText.slice(0,3000) }) });
+      const r = await fetch("/api/team/extract-profile", { method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ text: rawText.slice(0, 3000) }) });
       const d = await r.json(); if (!r.ok) throw new Error(d.error);
-      // Try to extract name from first line of raw text as fallback
-      const firstLine = rawText.trim().split(/\n/)[0].slice(0, 60);
-      setForm(f => ({ name: f.name || firstLine, notes: d.reply || "" }));
+      setForm(f => ({ name: d.name || f.name || "", notes: d.notes || "" }));
       setFormTab("manual");
     } catch(e) { setExtractErr(e instanceof Error ? e.message : "שגיאה"); }
     finally { setExtracting(false); }
@@ -3542,8 +3540,8 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
                 <div style={{display:"flex",gap:6,marginBottom:4}}>
                   <button type="button" className="secondary" style={{fontSize:11,padding:"4px 9px"}} disabled={extracting||form.notes.trim().length<20}
                     onClick={async()=>{ setExtracting(true); setExtractErr("");
-                      try { const r=await fetch("/api/ai-general",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({systemPrompt:`אתה עוזר למנהל גיוס לעצב פרופיל עובד. ארגן את הטקסט לפסקאות קצרות תחת כותרות ברורות בעברית. כותרות אפשריות: "תפקיד ורקע:", "ניסיון מקצועי:", "כיוון מקצועי:", "מצב נוכחי:", "מה הביא לפגישה:" — רק אם רלוונטי. שמור על כל המידע. אל תמציא. ללא Markdown (ללא **, *, #).`,query:form.notes.slice(0,3000)})});
-                      const d=await r.json(); if(r.ok&&d.reply) setForm(f=>({...f,notes:d.reply})); } catch{} finally{setExtracting(false);} }}>
+                      try { const r=await fetch("/api/team/extract-profile",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:form.notes.slice(0,3000),nameHint:form.name})});
+                      const d=await r.json(); if(r.ok){ if(d.name&&!form.name)setForm(f=>({...f,name:d.name})); if(d.notes)setForm(f=>({...f,notes:d.notes})); } } catch{} finally{setExtracting(false);} }}>
                     {extracting?"מעצב...":"✦ עיצוב AI"}
                   </button>
                   <small style={{color:"var(--muted)",alignSelf:"center"}}>ממיר טקסט גולמי לפרופיל מסודר</small>
