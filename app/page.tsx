@@ -3256,24 +3256,17 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
   }
   async function runInsight() {
     setAiRunning(true); setErr("");
-    setMatching(true); setAnalyzing(true);
-    const allSummaries = meetings.map(m=>`[${m.meetingDate?.slice(0,10)||""}] ${m.summary}`).join("\n\n");
-    const context = member.notes + (allSummaries ? "\n\nסיכומי פגישות:\n" + allSummaries : "");
     try {
-      const [matchRes, analyzeRes] = await Promise.all([
-        fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"match-jobs",memberId:member.id,memberName:member.name,memberNotes:context,jobs:jobs.map(j=>({id:j.id,title:j.title,client:j.client,technologies:j.tech}))}) }),
-        fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"analyze",memberId:member.id,memberName:member.name,memberNotes:context}) }),
-      ]);
-      let newMatch = matchResult, newAnalysis = analysis;
-      if (matchRes.ok) { const d = await matchRes.json(); newMatch = d.result; setMatchResult(d.result); }
-      if (analyzeRes.ok) { const d = await analyzeRes.json(); newAnalysis = d.analysis; setAnalysis(d.analysis); }
-      // Persist insight to DB so it survives navigation
-      if (newMatch || newAnalysis) {
-        await fetch("/api/team", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ id:member.id, aiInsight:{...newMatch??{}, ...newAnalysis??{}} }) });
-        onRefresh();
-      }
+      // Server runs everything in parallel and saves to DB — survives tab navigation
+      const r = await fetch("/api/team/run-insight", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ memberId: member.id }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "שגיאה");
+      const ins = d.insight;
+      setMatchResult({ matches: ins.matches, analysis: ins.analysis });
+      setAnalysis({ strengths: ins.strengths, gaps: ins.gaps, growth_recommendation: ins.growth_recommendation, next_steps: ins.next_steps });
+      onRefresh();
     } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
-    finally { setMatching(false); setAnalyzing(false); setAiRunning(false); }
+    finally { setAiRunning(false); }
   }
 
   return (
