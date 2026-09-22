@@ -324,6 +324,7 @@ export default function Home() {
       setArchivedApplications((d.archivedApplications || []).map((a: any) => ({
         applicationId: Number(a.application_id), candidateName: a.full_name,
         role: a.role, client: a.client, status: a.status, updatedAt: a.updated_at,
+        rejectionReason: a.evaluation_feedback || "",
       })));
       setAiActivity((d.aiActivity || []).map((x: any) => ({
         id: Number(x.id),
@@ -1392,10 +1393,10 @@ function CandidatePage({
       return;
     }
     if (nextStatus === "נדחה") {
-      const reason = prompt("סיבת הדחייה (אופציונלי — תישמר בפעולה הבאה):");
-      if (reason === null) return; // cancelled
-      // Save status + reason, then archive this specific application
-      await save({ status: "נדחה", nextAction: reason ? `נדחה: ${reason}` : "נדחה", nextActionDate: null, archived: true });
+      const reason = prompt("סיבת הדחייה (אופציונלי):");
+      if (reason === null) return;
+      // evaluationFeedback stores rejection reason; archived moves it out of active view
+      await save({ status: "נדחה", evaluationFeedback: reason ? `סיבת דחייה: ${reason}` : "", nextAction: "", nextActionDate: null, archived: true });
       return;
     }
     const warnings: string[] = [];
@@ -1435,6 +1436,9 @@ function CandidatePage({
           <button className="secondary" onClick={editCandidate}>
             עריכת פרטי מועמד
           </button>
+          {c.status === "נדחה" && c.evaluationFeedback?.startsWith("סיבת דחייה:") && (
+            <div style={{background:"#fdecec",color:"#a43f3f",borderRadius:8,padding:"7px 12px",fontSize:12,maxWidth:260}}>{c.evaluationFeedback}</div>
+          )}
           <label>
             סטטוס במועמדות זו
             <select
@@ -3089,7 +3093,11 @@ function ArchivePage({
           <div className="panel-head padded"><div><h2>מועמדויות בארכיון</h2><p>{applications.length} מועמדויות</p></div></div>
           {applications.map((application) => (
             <article className="archive-row" key={application.applicationId}>
-              <div><b>{application.candidateName}</b><span>{application.role} · {application.client} · {application.status}</span></div>
+              <div>
+                <b>{application.candidateName}</b>
+                <span>{application.role} · {application.client} · {application.status}</span>
+                {(application as any).rejectionReason && <span style={{color:"var(--orange)",fontSize:11,display:"block",marginTop:2}}>{(application as any).rejectionReason}</span>}
+              </div>
               <button className="secondary" disabled={restoring === `application-${application.applicationId}`} onClick={() => restore("application", application.applicationId)}>{restoring === `application-${application.applicationId}` ? "משחזר..." : "שחזור מועמדות"}</button>
             </article>
           ))}

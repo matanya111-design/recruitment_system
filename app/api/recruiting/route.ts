@@ -108,7 +108,7 @@ export async function GET(request: Request) {
 
     const archivedJobRows = toRows(await db.execute(sql`SELECT id,title,client,status,updated_at FROM jobs WHERE archived=true ORDER BY updated_at DESC`));
     const archivedAppRows = toRows(await db.execute(sql`
-      SELECT a.id application_id,a.status,a.updated_at,c.full_name,j.title role,j.client
+      SELECT a.id application_id,a.status,a.updated_at,a.evaluation_feedback,c.full_name,j.title role,j.client
       FROM applications a JOIN candidates c ON c.id=a.candidate_id JOIN jobs j ON j.id=a.job_id
       WHERE a.archived=true AND c.archived=false AND j.archived=false ORDER BY a.updated_at DESC
     `));
