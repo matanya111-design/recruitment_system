@@ -3410,8 +3410,10 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [formTab, setFormTab] = useState<"manual"|"ai">("manual");
   const [editMember, setEditMember] = useState<TeamMember|null>(null);
   const [form, setForm] = useState({name:"",notes:""});
+  const [rawText, setRawText] = useState(""), [extracting, setExtracting] = useState(false), [extractErr, setExtractErr] = useState("");
 
   useEffect(() => { fetchMembers(); }, []);
   async function fetchMembers() {
@@ -3422,7 +3424,21 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
   async function saveMember() {
     const body = editMember ? {...form,id:editMember.id} : form;
     const r = await fetch("/api/team", { method:editMember?"PATCH":"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
-    if (r.ok) { setShowForm(false); setEditMember(null); setForm({name:"",notes:""}); await fetchMembers(); }
+    if (r.ok) { setShowForm(false); setEditMember(null); setForm({name:"",notes:""}); setRawText(""); await fetchMembers(); }
+  }
+  async function extractProfile() {
+    if (rawText.trim().length < 20) { setExtractErr("יש להדביק לפחות 20 תווים"); return; }
+    setExtracting(true); setExtractErr("");
+    try {
+      const r = await fetch("/api/ai-general", { method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ query: `חלץ מהטקסט הגולמי הבא: שם מלא, תפקיד נוכחי/אחרון, חברה נוכחית, תחומי מומחיות, ניסיון רלוונטי, ומה הביא אותו לפגישה (אם ידוע). כתוב בעברית תמציתית. טקסט: ${rawText.slice(0,3000)}` }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error);
+      // Try to extract name from first line of raw text as fallback
+      const firstLine = rawText.trim().split(/\n/)[0].slice(0, 60);
+      setForm(f => ({ name: f.name || firstLine, notes: d.reply || "" }));
+      setFormTab("manual");
+    } catch(e) { setExtractErr(e instanceof Error ? e.message : "שגיאה"); }
+    finally { setExtracting(false); }
   }
   async function deleteMember(id:number) {
     if (!confirm("למחוק את חבר הצוות וכל הפגישות שלו?")) return;
@@ -3433,18 +3449,36 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
   return (
     <>
       <Heading title="ניהול צוות" subtitle="מעקב אחר עובדים — פגישות 1:1, ציר זמן, ניתוח AI והתאמת משרות." action={
-        <button className="primary" onClick={()=>{setShowForm(true);setEditMember(null);setForm({name:"",notes:""});}}>＋ עובד חדש</button>
+        <button className="primary" onClick={()=>{setShowForm(true);setEditMember(null);setForm({name:"",notes:""});setRawText("");setFormTab("manual");}}>＋ עובד חדש</button>
       } />
       {(showForm || editMember) && (
         <section className="panel content-card" style={{marginBottom:14}}>
           <h2>{editMember?"עריכת עובד":"הוספת עובד חדש"}</h2>
-          <div className="form-grid">
-            <label className="wide">שם מלא<input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="שם העובד" /></label>
-            <label className="wide">פרופיל / הערות כלליות<textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="תפקיד, רקע, מצב נוכחי..." style={{minHeight:60}} /></label>
-          </div>
+          {!editMember && (
+            <div style={{display:"flex",gap:6,marginBottom:12}}>
+              <button className={`secondary${formTab==="manual"?" active":""}`} style={formTab==="manual"?{borderColor:"var(--purple)",background:"#f2f0ff",color:"var(--purple)"}:{}} onClick={()=>setFormTab("manual")}>הזנה ידנית</button>
+              <button className={`secondary${formTab==="ai"?" active":""}`} style={formTab==="ai"?{borderColor:"var(--purple)",background:"#f2f0ff",color:"var(--purple)"}:{}} onClick={()=>setFormTab("ai")}>✦ בניית פרופיל מטקסט גולמי</button>
+            </div>
+          )}
+          {formTab==="ai" && !editMember && (
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
+              <p style={{margin:0,fontSize:13,color:"var(--muted)"}}>הדבק תיאור שיחה, LinkedIn, מייל, הערות — ה-AI יבנה פרופיל ראשוני. תוכל לערוך לפני שמירה.</p>
+              <textarea value={rawText} onChange={e=>setRawText(e.target.value)} placeholder="הדבק כאן כל טקסט גולמי על העובד..." style={{minHeight:120,border:"1px solid #dfe2e9",borderRadius:8,padding:10,font:"inherit",resize:"vertical"}} />
+              {extractErr && <div className="cv-message error">{extractErr}</div>}
+              <div style={{display:"flex",gap:8}}>
+                <button className="ai-button" disabled={extracting||rawText.trim().length<20} onClick={extractProfile}>{extracting?"בונה פרופיל...":"✦ בנה פרופיל"}</button>
+              </div>
+            </div>
+          )}
+          {(formTab==="manual" || editMember) && (
+            <div className="form-grid">
+              <label className="wide">שם מלא<input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="שם העובד" /></label>
+              <label className="wide">פרופיל / הערות כלליות<textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="תפקיד, רקע, מצב נוכחי..." style={{minHeight:80}} /></label>
+            </div>
+          )}
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
             <button className="secondary" onClick={()=>{setShowForm(false);setEditMember(null);}}>ביטול</button>
-            <button className="primary" disabled={!form.name.trim()} onClick={saveMember}>{editMember?"שמירה":"הוספה"}</button>
+            <button className="primary" disabled={!form.name.trim()||(formTab==="ai"&&!editMember&&!form.notes)} onClick={saveMember}>{editMember?"שמירה":"הוספה"}</button>
           </div>
         </section>
       )}
