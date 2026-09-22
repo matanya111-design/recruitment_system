@@ -1226,13 +1226,17 @@ function CandidateTable({
 }
 
 function ReadableInterviewSummary({ text }: { text: string }) {
-  const normalized = text
+  // Strip Markdown bold/italic markers and clean up
+  const cleaned = text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/^#+\s*/gm, "")
     .replace(/\r/g, "")
     .replace(/\s+(?=(?:אישיותית|מקצועית\s*\/\s*טכנולוגית|פערים|נקודות לבירור|שורה תחתונה|המלצה)\s*:)/g, "\n\n")
     .trim();
-  let blocks = normalized.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
-  if (blocks.length === 1 && normalized.length > 420) {
-    const sentences = normalized.match(/[^.!?]+[.!?]?/g)?.map((s) => s.trim()).filter(Boolean) || [normalized];
+  let blocks = cleaned.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  if (blocks.length === 1 && cleaned.length > 420) {
+    const sentences = cleaned.match(/[^.!?]+[.!?]?/g)?.map((s) => s.trim()).filter(Boolean) || [cleaned];
     blocks = [];
     for (let index = 0; index < sentences.length; index += 2)
       blocks.push(sentences.slice(index, index + 2).join(" "));
@@ -3448,7 +3452,7 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
     setExtracting(true); setExtractErr("");
     try {
       const r = await fetch("/api/ai-general", { method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ query: `חלץ מהטקסט הגולמי הבא: שם מלא, תפקיד נוכחי/אחרון, חברה נוכחית, תחומי מומחיות, ניסיון רלוונטי, ומה הביא אותו לפגישה (אם ידוע). כתוב בעברית תמציתית. טקסט: ${rawText.slice(0,3000)}` }) });
+        body:JSON.stringify({ systemPrompt: `אתה עוזר למנהל גיוס לבנות פרופיל עובד מובנה וקריא בעברית. כתוב פסקאות קצרות תחת כותרות ברורות כמו "תפקיד ורקע:", "ניסיון מקצועי:", "כיוון מקצועי:", "מצב נוכחי:", "מה הביא לפגישה:" — רק כותרות שרלוונטיות לתוכן. שמור על כל המידע שקיים בקלט. אל תמציא, אל תסיק מעבר לנאמר. אל תשתמש ב-Markdown (ללא **, *, # וכו'). טקסט טבעי ישיר בעברית.`, query: rawText.slice(0,3000) }) });
       const d = await r.json(); if (!r.ok) throw new Error(d.error);
       // Try to extract name from first line of raw text as fallback
       const firstLine = rawText.trim().split(/\n/)[0].slice(0, 60);
@@ -3495,7 +3499,7 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
                 <div style={{display:"flex",gap:6,marginBottom:4}}>
                   <button type="button" className="secondary" style={{fontSize:11,padding:"4px 9px"}} disabled={extracting||form.notes.trim().length<20}
                     onClick={async()=>{ setExtracting(true); setExtractErr("");
-                      try { const r=await fetch("/api/ai-general",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:`ארגן וסדר את הטקסט הגולמי הבא על עובד לפרופיל מובנה וקריא בעברית. השתמש בכותרות קצרות כמו "תפקיד ורקע:", "ניסיון מקצועי:", "כיוון מקצועי:", "מצב נוכחי:" וכו' — רק אם הן רלוונטיות לתוכן. שמור על כל המידע. טקסט: ${form.notes.slice(0,3000)}`})});
+                      try { const r=await fetch("/api/ai-general",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({systemPrompt:`אתה עוזר למנהל גיוס לעצב פרופיל עובד. ארגן את הטקסט לפסקאות קצרות תחת כותרות ברורות בעברית. כותרות אפשריות: "תפקיד ורקע:", "ניסיון מקצועי:", "כיוון מקצועי:", "מצב נוכחי:", "מה הביא לפגישה:" — רק אם רלוונטי. שמור על כל המידע. אל תמציא. ללא Markdown (ללא **, *, #).`,query:form.notes.slice(0,3000)})});
                       const d=await r.json(); if(r.ok&&d.reply) setForm(f=>({...f,notes:d.reply})); } catch{} finally{setExtracting(false);} }}>
                     {extracting?"מעצב...":"✦ עיצוב AI"}
                   </button>

@@ -18,6 +18,7 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
       query?: string;
+      systemPrompt?: string;
       jobsCount?: number;
       candidatesCount?: number;
       teamMemberId?: number;
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
       instructions = `אתה עוזר לחיפוש משרות מתאימות לחבר צוות. בהינתן פרופיל ורשימת משרות פעילות, זהה התאמות ופרט בעברית טבעית. הצג עד 3 משרות מתאימות ביותר עם הסבר קצר לכל אחת. אם אין התאמות טובות, אמור זאת ישירות.`;
       input = `חבר צוות: ${member.name}\nסיכום: ${member.notes || "לא הוזן"}\n\nמשרות פעילות:\n${jobsData.map(j=>`- ${j.title} ב-${j.client} | טכנולוגיות: ${j.technologies}`).join("\n")}`;
     } else {
-      instructions = `אתה עוזר AI של NAYA — חברת גיוס טכנולוגי. יש לך גישה לנתוני המערכת. ענה בעברית טבעית, תמציתית ומקצועית על שאלות המשתמש.`;
+      instructions = body.systemPrompt || `אתה עוזר AI של NAYA — חברת גיוס טכנולוגי. יש לך גישה לנתוני המערכת. ענה בעברית טבעית, תמציתית ומקצועית על שאלות המשתמש.`;
       const context = `נתוני מערכת:\n\nמשרות פעילות (${jobsData.length}):\n${jobsData.map(j=>`- ${j.title} ב-${j.client} (${j.status})`).join("\n")}\n\nמועמדים אחרונים (${candsData.length}):\n${candsData.map(c=>`- ${c.full_name} ← ${c.role} | ציון ${c.score??"-"} | ${c.status} | פעולה: ${c.next_action||"לא הוגדרה"}`).join("\n")}`;
       input = `${context}\n\nשאלת המשתמש: ${body.query}`;
     }

@@ -99,9 +99,10 @@ export async function POST(request: Request) {
     const result = await generateStructured<{ summary: string; action_items: string[]; insights: string }>({
       operation: "team_meeting_summary",
       instructions: `אתה מסייע לניהול שיחות אחד על אחד עם עובדים. בהינתן תמלול או הערות מפגישה, צור:
-- summary: סיכום תמציתי של הפגישה — מה עלה, איפה העובד, תחושות, יעדים. עברית טבעית, פסקאות קצרות.
-- action_items: רשימת משימות קונקרטיות שעלו מהפגישה (כל פריט = פעולה ספציפית).
-- insights: תובנות על העובד — חוזקות, אתגרים, מוטיבציה, כיוון מקצועי. 2-3 משפטים.`,
+
+- summary: סיכום מפורט ומלא של הפגישה. שמור על כל המידע המהותי — מה עלה, מה נאמר, איפה העובד מקצועית ואישית, יעדים, בעיות, החלטות. כתוב בעברית טבעית בפסקאות קצרות. אל תמציא ואל תשמיט מידע. ללא Markdown (ללא **, *, #).
+- action_items: רשימת משימות קונקרטיות שעלו מהפגישה — כל פריט הוא פעולה ספציפית עם בעלים ברורה. ריק אם לא היו.
+- insights: תובנות על העובד — חוזקות, אתגרים, מוטיבציה, כיוון מקצועי. 2-3 משפטים, ישירים ומעשיים. ללא Markdown.`,
       input: `תמלול/הערות הפגישה:\n${body.transcript}`,
       schemaName: "meeting_summary",
       jsonSchema: meetingSummarySchema,
