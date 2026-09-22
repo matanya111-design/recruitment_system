@@ -571,6 +571,8 @@ export default function Home() {
                     id: selectedCandidate.applicationId,
                     ...body,
                   });
+                  // Auto-navigate away when application is archived (e.g. rejected)
+                  if (body.archived) setView("candidates");
                 }}
                 archive={async () => {
                   if (
@@ -1385,8 +1387,15 @@ function CandidatePage({
   async function changeStatus(nextStatus: string) {
     if (nextStatus === "הפסיק תהליך") {
       const reason = prompt("מה הסיבה להפסקת התהליך? (יישמר בהערות)");
-      if (reason === null) return; // cancelled
+      if (reason === null) return;
       await save({ status: nextStatus, nextAction: reason ? `הפסיק תהליך: ${reason}` : "הפסיק תהליך", nextActionDate: null });
+      return;
+    }
+    if (nextStatus === "נדחה") {
+      const reason = prompt("סיבת הדחייה (אופציונלי — תישמר בפעולה הבאה):");
+      if (reason === null) return; // cancelled
+      // Save status + reason, then archive this specific application
+      await save({ status: "נדחה", nextAction: reason ? `נדחה: ${reason}` : "נדחה", nextActionDate: null, archived: true });
       return;
     }
     const warnings: string[] = [];
@@ -3320,9 +3329,8 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
         </div>
         <div style={{flex:1}}>
           <b style={{fontSize:15}}>{member.name}</b>
-          {!open && member.notes && <span style={{fontSize:12,color:"var(--muted)",marginRight:8}}>{member.notes.replace(/[*#\n]/g,"").slice(0,60)}{member.notes.length>60?"...":""}</span>}
         </div>
-        {meetingCount && <span style={{fontSize:11,color:"var(--green)",fontWeight:700}}>AI ✓</span>}
+        {meetingCount && <span title="סקירת AI בוצעה" style={{fontSize:11,color:"var(--green)",background:"var(--green-soft)",borderRadius:6,padding:"2px 7px",fontWeight:700}}>✓ AI</span>}
         <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
           <button className="secondary" style={{fontSize:11,padding:"4px 9px"}} onClick={onEdit}>עריכה</button>
           <button className="danger-text-button" style={{fontSize:11}} onClick={onDelete}>מחיקה</button>
