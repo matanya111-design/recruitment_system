@@ -1,6 +1,6 @@
 # מערכת ניהול והערכת מועמדים — NAYA Tech Recruitment System
 
-> גרסה: 2.0 | Branch: `dev` | עודכן: ספטמבר 2026
+> גרסה: 2.1 | Branch: `dev` | עודכן: ספטמבר 2026
 
 ## מה זה?
 
@@ -57,8 +57,11 @@ recruitment_system/
 │   │   ├── interview/summarize/ # סיכום ראיון AI
 │   │   ├── jobs/parse/ & refine/ # יצירת משרה מטקסט
 │   │   ├── ai-chat/            # המשך שיח עם AI על מייל גיוס
-│   │   ├── ai-general/         # שאילתות AI כלליות + team matching
+│   │   ├── ai-general/         # שאילתות AI כלליות
 │   │   ├── team/               # CRUD ניהול צוות
+│   │   │   ├── meetings/       # פגישות 1:1 — שמירה, סיכום AI, ניתוח, matching
+│   │   │   ├── run-insight/    # סקירת AI מלאה (server-side, parallel, DB-saved)
+│   │   │   └── extract-profile/ # חילוץ פרופיל עובד מטקסט גולמי
 │   │   └── health/             # live + ready health checks
 │   ├── page.tsx                # SPA React (UI מלא)
 │   ├── layout.tsx              # HTML root
@@ -73,8 +76,9 @@ recruitment_system/
 │   ├── ai/                     # AI provider, prompts, schemas
 │   │   ├── provider.ts         # Dual-mode adapter (Responses API + Chat Completions)
 │   │   ├── evaluation-prompt.ts # פרומפטים הערכת מועמד (NAYA context)
-│   │   ├── prompts.ts          # יתר הפרומפטים (CV, Job, Interview)
-│   │   └── instructions.ts     # instructionDefinitions
+│   │   ├── prompts.ts          # פרומפטים: CV, Job, Interview Summary
+│   │   ├── team-prompts.ts     # פרומפטים: פגישות, matching, ניתוח עובד, חילוץ פרופיל
+│   │   └── instructions.ts     # 9 instructionDefinitions (ניתנים לעריכה מ-Admin)
 │   ├── auth/                   # Authentication
 │   │   ├── session.ts          # iron-session config
 │   │   ├── identity.ts         # requireAppIdentity / requireAdmin
@@ -178,28 +182,29 @@ npm run db:migrate   # הרצת migrations
 | `app_users` | Allowlist משתמשים + roles (admin/user) |
 | `jobs` | משרות — דרישות, לקוח, סטטוס, טכנולוגיות |
 | `candidates` | מועמדים — פרטים, קורות חיים, חוות דעת מגייס |
-| `applications` | שיוך מועמד↔משרה + סטטוס, ראיון, הערכה |
+| `applications` | שיוך מועמד↔משרה + סטטוס, ראיון, הערכה, סיבת דחייה |
 | `ai_activity_logs` | יומן כל קריאות AI — מודל, טוקנים, עלות |
-| `ai_instructions` | פרומפטים ניתנים לעריכה ע"י Admin |
+| `ai_instructions` | 9 פרומפטים ניתנים לעריכה ע"י Admin |
 | `evaluation_rules` | כללי כיול רוחביים מאושרים |
 | `audit_logs` | Audit trail לפעולות רגישות |
-| `team_members` | חברי צוות — סיכום שיחה, action items, משרות מסומנות |
+| `team_members` | עובדי צוות — פרופיל, ai_insight (נשמר מסריקה) |
+| `team_meetings` | פגישות 1:1 — תמלול, סיכום AI, action items, תאריך |
 
 ## לוחות הניווט
 
 | טאב | מה עושים שם |
 |---|---|
 | לוח בקרה | סטטוס כללי, משימות פתוחות, מועמדים אחרונים |
-| משרות | רשימה עם מיון, יצירה ידנית / מ-AI |
-| מועמדים | רשימה עם מיון, חיפוש וסינון |
-| מועמד (דף פנימי) | 4 טאבים: סקירה / קורות חיים / ראיון / הערכה לפני+אחרי |
-| ארכיון | משרות ומועמדויות מורדות, עם שחזור |
-| מדריך | הסבר מעשי על זרימת העבודה |
-| פעילות AI | יומן קריאות AI + עלות משוערת |
+| משרות | רשימה עם מיון לפי כל שדה, יצירה ידנית / מ-AI |
+| מועמדים | רשימה עם מיון לפי כל שדה, חיפוש וסינון |
+| מועמד (דף פנימי) | סקירה / קורות חיים / סיכום ראיון / הערכה לפני ראיון / הערכה לאחר ראיון |
+| ארכיון | משרות ומועמדויות מורדות עם סיבת דחייה, שחזור |
+| מדריך | הסבר מעשי על זרימת העבודה (מעודכן) |
+| פעילות AI | יומן קריאות AI + עלות משוערת, מיון לפי כל שדה |
 | שאילתות AI | שאל כל שאלה על המערכת |
-| ניהול צוות | רשימה מתקפלת — לחיצה על עובד פותחת: ציר זמן פגישות, הוספת פגישה עם AI summary, התאמת משרות + ניתוח AI (נשמר לDB) |
-| משתמשים | Admin בלבד — allowlist ותפקידים |
-| הוראות AI | Admin בלבד — עריכת פרומפטים |
+| ניהול צוות | רשימה מתקפלת — לכל עובד: ציר זמן פגישות, פגישה חדשה + AI summary, התאמת משרות + ניתוח AI (שמור ב-DB, רץ ברקע) |
+| משתמשים | Admin בלבד — allowlist ותפקידים, "הסרת כולם חוץ ממני" |
+| הוראות AI | Admin בלבד — 9 פרומפטים ניתנים לעריכה ואיפוס |
 
 ## זרימת עבודה — מועמד בתהליך
 
@@ -210,14 +215,31 @@ npm run db:migrate   # הרצת migrations
     ↓
 העלאת PDF → חילוץ טקסט → אישור פרטים
     ↓
-הערכה לפני ראיון (AI) → שאלות לראיון + מייל גיוס
+הערכה לפני ראיון (AI) → שאלות לראיון + מייל גיוס + שיח המשך
     ↓ (אישור לראיון)
-תמלול ראיון → AI מכין טיוטה → אישור סיכום
+תמלול ראיון (הדבקה / קובץ .txt) → AI מכין טיוטה → אישור סיכום
     ↓
 הערכה לאחר ראיון (AI) → להעביר ללקוח / לא להעביר
     ↓
-עדכון סטטוס → הפסיק תהליך / התקבל / הועבר ללקוח
+עדכון סטטוס:
+  • התקבל / הועבר ללקוח — נשאר פעיל
+  • נדחה + סיבה — מועבר לארכיון אוטומטית (נשאר במשרות אחרות)
+  • הפסיק תהליך + סיבה — מועבר לארכיון
 ```
+
+## פרומפטים AI (9 סה"כ, ניתנים לעריכה מ-Admin)
+
+| מפתח | תפקיד |
+|---|---|
+| `candidate_evaluation` | הערכת מועמד לפני ראיון — NAYA context |
+| `post_interview_evaluation` | הערכת מועמד לאחר ראיון |
+| `interview_summary` | סיכום ראיון מחומר גלם |
+| `job_parsing` | יצירת משרה מטקסט חופשי |
+| `cv_extraction` | חילוץ פרטי מועמד מקורות חיים |
+| `team_meeting_summary` | סיכום פגישת 1:1 עם עובד |
+| `team_job_match` | התאמת משרות לעובד |
+| `team_member_analysis` | ניתוח מקצועי של עובד |
+| `team_extract_profile` | בניית פרופיל עובד מטקסט גולמי |
 
 ## AI Provider — איך זה עובד
 
