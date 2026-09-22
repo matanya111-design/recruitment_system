@@ -2957,7 +2957,7 @@ function AiInstructionsPage({
 }
 
 function AiActivityPage({ rows: rawRows }: { rows: AiActivity[] }) {
-  const rows = rawRows.filter(r => r.inputTokens > 0 || r.outputTokens > 0 || r.actionType.trim() !== "");
+  const rows = rawRows.filter(r => r.inputTokens > 0 || r.outputTokens > 0 || (r.actionType ?? "").trim() !== "");
   const total = rows.reduce((sum, row) => sum + row.estimatedCostUsd, 0);
   const tokens = rows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0);
   return (
@@ -3166,85 +3166,270 @@ function GeneralAiPage({ jobs, candidates }: { jobs: Job[]; candidates: Candidat
   );
 }
 
+type TeamMember = {id:number;name:string;notes:string;targetJobIds:number[];actions:string[];createdAt:string};
+type TeamMeeting = {id:number;memberId:number;meetingDate:string;summary:string;actionItems:string[];createdAt:string};
+
+function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
+  member: TeamMember; jobs: Job[];
+  onEdit: () => void; onDelete: () => void; onRefresh: () => void;
+}) {
+  const [tab, setTab] = useState<"timeline"|"meeting"|"match"|"analysis">("timeline");
+  const [meetings, setMeetings] = useState<TeamMeeting[]>([]);
+  const [meetingsLoaded, setMeetingsLoaded] = useState(false);
+  const [transcript, setTranscript] = useState(""), [meetingDate, setMeetingDate] = useState(() => new Date().toISOString().slice(0,16));
+  const [draft, setDraft] = useState<{summary:string;action_items:string[];insights:string}|null>(null);
+  const [summarizing, setSummarizing] = useState(false), [saving, setSaving] = useState(false);
+  const [matchResult, setMatchResult] = useState<{matches:Array<{job_title:string;client:string;fit_score:number;reason:string}>;analysis:string}|null>(null);
+  const [matching, setMatching] = useState(false);
+  const [analysis, setAnalysis] = useState<{strengths:string[];gaps:string[];growth_recommendation:string;next_steps:string[]}|null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { if (tab === "timeline" && !meetingsLoaded) loadMeetings(); }, [tab]);
+  useEffect(() => { if (tab === "match" && !matchResult) runMatch(); }, [tab]);
+
+  async function loadMeetings() {
+    const r = await fetch(`/api/team/meetings?memberId=${member.id}`);
+    const d = await r.json();
+    setMeetings(d.meetings || []); setMeetingsLoaded(true);
+  }
+  async function summarizeTranscript() {
+    if (transcript.trim().length < 30) { setErr("יש להדביק תמלול של לפחות 30 תווים"); return; }
+    setSummarizing(true); setErr(""); setDraft(null);
+    try {
+      const r = await fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"summarize",memberId:member.id,transcript,memberName:member.name}) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error);
+      setDraft(d.draft);
+    } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
+    finally { setSummarizing(false); }
+  }
+  async function saveMeeting() {
+    if (!draft) return;
+    setSaving(true); setErr("");
+    try {
+      const r = await fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"save",memberId:member.id,transcript,summary:draft.summary,actionItems:draft.action_items,meetingDate}) });
+      if (!r.ok) throw new Error("שמירה נכשלה");
+      setTranscript(""); setDraft(null); setMeetingsLoaded(false); setTab("timeline"); loadMeetings(); onRefresh();
+    } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
+    finally { setSaving(false); }
+  }
+  async function deleteMeeting(id:number) {
+    if (!confirm("למחוק את הפגישה?")) return;
+    await fetch("/api/team/meetings", { method:"DELETE", headers:{"Content-Type":"application/json"}, body:JSON.stringify({meetingId:id}) });
+    setMeetings(prev => prev.filter(m=>m.id!==id));
+  }
+  async function runMatch() {
+    setMatching(true); setErr("");
+    try {
+      const allSummaries = meetings.map(m=>`[${m.meetingDate?.slice(0,10)||""}] ${m.summary}`).join("\n\n");
+      const r = await fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"match-jobs",memberId:member.id,memberName:member.name,memberNotes:member.notes+"\n\n"+allSummaries,jobs:jobs.map(j=>({id:j.id,title:j.title,client:j.client,technologies:j.tech}))}) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error);
+      setMatchResult(d.result);
+    } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
+    finally { setMatching(false); }
+  }
+  async function runAnalysis() {
+    setAnalyzing(true); setErr("");
+    try {
+      const allSummaries = meetings.map(m=>`[${m.meetingDate?.slice(0,10)||""}] ${m.summary}`).join("\n\n");
+      const r = await fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"analyze",memberId:member.id,memberName:member.name,memberNotes:member.notes+"\n\n"+allSummaries}) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error);
+      setAnalysis(d.analysis);
+    } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
+    finally { setAnalyzing(false); }
+  }
+
+  return (
+    <section className="panel content-card" style={{marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+        <div className="avatar violet" style={{width:40,height:40,borderRadius:"50%",display:"grid",placeItems:"center",fontWeight:800,fontSize:14}}>
+          {member.name.split(" ").map(w=>w[0]).join("").slice(0,2)}
+        </div>
+        <div style={{flex:1}}><b style={{fontSize:16}}>{member.name}</b>{member.notes&&<p style={{margin:"2px 0 0",fontSize:12,color:"var(--muted)"}}>{member.notes.slice(0,80)}{member.notes.length>80?"...":""}</p>}</div>
+        <button className="secondary" style={{fontSize:11}} onClick={onEdit}>עריכה</button>
+        <button className="danger-text-button" style={{fontSize:11}} onClick={onDelete}>מחיקה</button>
+      </div>
+      <div className="tabs" style={{marginTop:0,marginBottom:12}}>
+        {([["timeline","ציר זמן"],["meeting","פגישה חדשה"],["match","התאמת משרות"],["analysis","ניתוח AI"]] as const).map(([k,l])=>(
+          <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{l}</button>
+        ))}
+      </div>
+      {err && <div className="cv-message error" style={{marginBottom:10}}>{err}</div>}
+
+      {tab==="timeline" && (
+        <div>
+          {!meetingsLoaded && <div style={{color:"var(--muted)",fontSize:13}}>טוען...</div>}
+          {meetingsLoaded && meetings.length===0 && <div className="empty-inline"><b>אין פגישות רשומות עדיין</b><span>עבור ל"פגישה חדשה" כדי להוסיף את הפגישה הראשונה.</span></div>}
+          {meetings.map(m=>(
+            <div key={m.id} style={{borderRight:"3px solid var(--purple)",paddingRight:14,marginBottom:16,position:"relative"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                <b style={{fontSize:13}}>{m.meetingDate ? new Date(m.meetingDate).toLocaleDateString("he-IL",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}) : ""}</b>
+                <button className="danger-text-button" style={{fontSize:10,padding:"2px 6px"}} onClick={()=>deleteMeeting(m.id)}>מחיקה</button>
+              </div>
+              <p style={{whiteSpace:"pre-wrap",fontSize:13,color:"#4f5870",margin:"0 0 6px"}}>{m.summary}</p>
+              {(m.actionItems as string[])?.length>0 && (
+                <div style={{fontSize:12}}>
+                  <b>Action Items: </b>
+                  {(m.actionItems as string[]).map((a,i)=><span key={i} style={{display:"block",color:"var(--muted)",paddingRight:8}}>{i+1}. {a}</span>)}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab==="meeting" && (
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+            <label style={{fontSize:11,color:"var(--muted)",display:"flex",flexDirection:"column",gap:4}}>
+              תאריך ושעת הפגישה
+              <input type="datetime-local" value={meetingDate} onChange={e=>setMeetingDate(e.target.value)} style={{border:"1px solid #dfe2e9",borderRadius:7,padding:"7px 10px",fontSize:13}} />
+            </label>
+          </div>
+          <label style={{fontSize:11,color:"var(--muted)",display:"flex",flexDirection:"column",gap:4}}>
+            תמלול / הערות הפגישה
+            <div style={{display:"flex",gap:6,marginBottom:4}}>
+              <label className="secondary" style={{cursor:"pointer",fontSize:12,padding:"6px 10px",display:"inline-flex",alignItems:"center",gap:5,borderRadius:7,border:"1px solid #dfe2e9"}}>
+                📎 קובץ
+                <input type="file" accept=".txt,.docx,.doc" style={{display:"none"}} onChange={async e=>{const f=e.target.files?.[0];if(f&&f.name.endsWith(".txt"))setTranscript(await f.text());e.target.value="";}} />
+              </label>
+            </div>
+            <textarea value={transcript} onChange={e=>setTranscript(e.target.value)} placeholder="הדבק תמלול Teams, הערות חופשיות, או העלה קובץ .txt..." style={{minHeight:140,border:"1px solid #dfe2e9",borderRadius:8,padding:10,font:"inherit",resize:"vertical"}} />
+          </label>
+          <div style={{display:"flex",gap:8}}>
+            <button className="ai-button" disabled={summarizing||transcript.trim().length<30} onClick={summarizeTranscript}>{summarizing?"מסכם...":"✦ יצירת סיכום באמצעות AI"}</button>
+          </div>
+          {draft && (
+            <div style={{background:"#f8f9fb",border:"1px solid #dcd8f7",borderRadius:10,padding:14,marginTop:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                <b style={{fontSize:14}}>טיוטת סיכום — בדוק ועדכן לפני שמירה</b>
+                <button className="danger-text-button" style={{fontSize:11}} onClick={()=>setDraft(null)}>ביטול</button>
+              </div>
+              <label style={{fontSize:11,color:"var(--muted)",display:"block",marginBottom:8}}>
+                סיכום
+                <textarea value={draft.summary} onChange={e=>setDraft(d=>d?{...d,summary:e.target.value}:d)} style={{width:"100%",minHeight:100,border:"1px solid #dfe2e9",borderRadius:8,padding:8,font:"inherit",marginTop:4,resize:"vertical"}} />
+              </label>
+              {draft.insights && <p style={{fontSize:12,color:"#6855cc",background:"#f0edff",borderRadius:7,padding:"8px 10px",margin:"0 0 8px"}}><b>תובנה: </b>{draft.insights}</p>}
+              {draft.action_items?.length>0 && (
+                <div style={{fontSize:12,marginBottom:8}}>
+                  <b>Action Items שזוהו:</b>
+                  {draft.action_items.map((a,i)=><div key={i} style={{padding:"2px 0 2px 4px",color:"var(--muted)"}}>{i+1}. {a}</div>)}
+                </div>
+              )}
+              <button className="primary" disabled={saving||!draft.summary.trim()} onClick={saveMeeting}>{saving?"שומר...":"שמירת הפגישה בציר הזמן"}</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab==="match" && (
+        <div>
+          {matching && <div style={{color:"var(--muted)",fontSize:13}}>מחפש התאמות...</div>}
+          {!matching && !matchResult && <button className="ai-button" onClick={runMatch}>✦ מצא משרות מתאימות</button>}
+          {matchResult && (
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+                <b>התאמות מהמאגר</b>
+                <button className="secondary" style={{fontSize:11}} onClick={()=>{setMatchResult(null);runMatch();}}>↺ רענון</button>
+              </div>
+              {matchResult.analysis && <p style={{fontSize:13,color:"#4f5870",marginBottom:10,background:"#f8f9fb",borderRadius:8,padding:10}}>{matchResult.analysis}</p>}
+              {matchResult.matches.map((m,i)=>(
+                <div key={i} style={{border:"1px solid #e8eaf0",borderRadius:9,padding:12,marginBottom:8}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <b>{m.job_title} · {m.client}</b>
+                    <span className={`score ${m.fit_score>=80?"high":m.fit_score>=65?"mid":"low"}`}>{m.fit_score}</span>
+                  </div>
+                  <p style={{margin:0,fontSize:13,color:"#596174"}}>{m.reason}</p>
+                </div>
+              ))}
+              {!matchResult.matches.length && <p style={{color:"var(--muted)"}}>לא נמצאו התאמות מתאימות בין פרופיל העובד למשרות הפעילות.</p>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab==="analysis" && (
+        <div>
+          {!analysis && <button className="ai-button" disabled={analyzing} onClick={runAnalysis}>{analyzing?"מנתח...":"✦ ניתוח AI של הפרופיל"}</button>}
+          {analysis && (
+            <div>
+              <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+                <button className="secondary" style={{fontSize:11}} onClick={()=>{setAnalysis(null);runAnalysis();}}>↺ רענון</button>
+              </div>
+              <div style={{marginBottom:12}}>
+                <b style={{fontSize:13,color:"var(--green)"}}>חוזקות</b>
+                {analysis.strengths.map((s,i)=><div key={i} style={{fontSize:13,padding:"3px 0",color:"#4f5870"}}>• {s}</div>)}
+              </div>
+              <div style={{marginBottom:12}}>
+                <b style={{fontSize:13,color:"var(--orange)"}}>פערים ואתגרים</b>
+                {analysis.gaps.map((g,i)=><div key={i} style={{fontSize:13,padding:"3px 0",color:"#4f5870"}}>• {g}</div>)}
+              </div>
+              <div style={{marginBottom:12,background:"#f0edff",borderRadius:8,padding:10}}>
+                <b style={{fontSize:13,color:"var(--purple)"}}>המלצת קידום מקצועי</b>
+                <p style={{margin:"4px 0 0",fontSize:13,color:"#4f5870"}}>{analysis.growth_recommendation}</p>
+              </div>
+              <div>
+                <b style={{fontSize:13}}>צעדים הבאים מומלצים</b>
+                {analysis.next_steps.map((s,i)=><div key={i} style={{fontSize:13,padding:"3px 0",color:"#4f5870"}}>{i+1}. {s}</div>)}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function TeamPage({ jobs }: { jobs: Job[] }) {
-  const [members, setMembers] = useState<Array<{id:number;name:string;notes:string;targetJobIds:number[];actions:string[];createdAt:string}>>([]);
-  const [loaded, setLoaded] = useState(false), [loading, setLoading] = useState(false);
-  const [editId, setEditId] = useState<number|null>(null);
-  const [form, setForm] = useState({name:"",notes:"",targetJobIds:[] as number[],actions:[] as string[]});
-  const [newAction, setNewAction] = useState("");
-  const [searching, setSearching] = useState<number|null>(null), [matchResult, setMatchResult] = useState<Record<number,string>>({});
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editMember, setEditMember] = useState<TeamMember|null>(null);
+  const [form, setForm] = useState({name:"",notes:""});
+
   useEffect(() => { fetchMembers(); }, []);
   async function fetchMembers() {
-    setLoading(true);
-    try { const r = await fetch("/api/team"); const d = await r.json(); if (r.ok) setMembers(d.members || []); }
-    finally { setLoading(false); setLoaded(true); }
+    const r = await fetch("/api/team"); const d = await r.json();
+    if (r.ok) setMembers(d.members || []);
+    setLoaded(true);
   }
   async function saveMember() {
-    const r = await fetch("/api/team", { method: editId ? "PATCH" : "POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(editId ? {...form,id:editId} : form) });
-    if (r.ok) { await fetchMembers(); setEditId(null); setForm({name:"",notes:"",targetJobIds:[],actions:[]}); }
+    const body = editMember ? {...form,id:editMember.id} : form;
+    const r = await fetch("/api/team", { method:editMember?"PATCH":"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+    if (r.ok) { setShowForm(false); setEditMember(null); setForm({name:"",notes:""}); await fetchMembers(); }
   }
   async function deleteMember(id:number) {
-    if (!confirm("למחוק את חבר הצוות?")) return;
+    if (!confirm("למחוק את חבר הצוות וכל הפגישות שלו?")) return;
     await fetch("/api/team", { method:"DELETE", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
     await fetchMembers();
   }
-  async function findMatches(memberId:number, force=false) {
-    if (!force && matchResult[memberId]) return; // already loaded
-    setSearching(memberId);
-    try {
-      const r = await fetch("/api/ai-general", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ teamMemberId: memberId, jobsCount: jobs.length }) });
-      const d = await r.json();
-      setMatchResult(prev => ({...prev, [memberId]: d.reply || ""}));
-    } finally { setSearching(null); }
-  }
-  // Auto-load matches when members are first fetched and jobs are available
-  useEffect(() => {
-    if (members.length > 0 && jobs.length > 0) {
-      members.forEach(m => findMatches(m.id));
-    }
-  }, [members.length, jobs.length]);
-  if (loading && !loaded) return <div className="loading">טוען...</div>;
+
   return (
     <>
-      <Heading title="ניהול צוות" subtitle="מעקב אחר עובדים ומועמדים פנימיים, יעדים ומשרות מתאימות." />
-      <section className="panel content-card" style={{marginBottom:16}}>
-        <h2>{editId ? "עריכת חבר צוות" : "הוספת חבר צוות חדש"}</h2>
-        <div className="form-grid">
-          <label className="wide">שם מלא<input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="שם העובד" /></label>
-          <label className="wide">סיכום שיחה אישית<textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="מה דיברתם, יעדים, מצב..." style={{minHeight:80}} /></label>
-          <label className="wide">משרות פוטנציאלית מתאימות
-            <select multiple value={form.targetJobIds.map(String)} onChange={e=>setForm(f=>({...f,targetJobIds:Array.from(e.target.selectedOptions,o=>Number(o.value))}))}>
-              {jobs.map(j=><option key={j.id} value={j.id}>{j.title} · {j.client}</option>)}
-            </select>
-          </label>
-          <label className="wide">Action Items
-            <div style={{display:"flex",gap:6,marginBottom:6}}>
-              <input value={newAction} onChange={e=>setNewAction(e.target.value)} placeholder="הוסף Action Item..." onKeyDown={e=>{ if(e.key==="Enter"&&newAction.trim()){setForm(f=>({...f,actions:[...f.actions,newAction.trim()]}));setNewAction("");e.preventDefault();}}} />
-              <button type="button" className="secondary" onClick={()=>{if(newAction.trim()){setForm(f=>({...f,actions:[...f.actions,newAction.trim()]}));setNewAction("");}}}>הוסף</button>
-            </div>
-            {form.actions.map((a,i)=><div key={i} style={{display:"flex",gap:6,marginBottom:4}}><span style={{flex:1}}>{a}</span><button type="button" className="danger-text-button" style={{fontSize:11}} onClick={()=>setForm(f=>({...f,actions:f.actions.filter((_,j)=>j!==i)}))}>✕</button></div>)}
-          </label>
-        </div>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-          {editId && <button className="secondary" onClick={()=>{setEditId(null);setForm({name:"",notes:"",targetJobIds:[],actions:[]});}}>ביטול</button>}
-          <button className="primary" disabled={!form.name.trim()} onClick={saveMember}>{editId?"שמירה":"הוספה"}</button>
-        </div>
-      </section>
-      {members.map(m=>(
-        <section key={m.id} className="panel content-card" style={{marginBottom:12}}>
-          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
-            <h2 style={{margin:0,flex:1}}>{m.name}</h2>
-            <button className="secondary" style={{fontSize:11}} onClick={()=>{setEditId(m.id);setForm({name:m.name,notes:m.notes,targetJobIds:m.targetJobIds,actions:m.actions||[]});}}>עריכה</button>
-            <button className="danger-text-button" style={{fontSize:11}} onClick={()=>deleteMember(m.id)}>מחיקה</button>
+      <Heading title="ניהול צוות" subtitle="מעקב אחר עובדים — פגישות 1:1, ציר זמן, ניתוח AI והתאמת משרות." action={
+        <button className="primary" onClick={()=>{setShowForm(true);setEditMember(null);setForm({name:"",notes:""});}}>＋ עובד חדש</button>
+      } />
+      {(showForm || editMember) && (
+        <section className="panel content-card" style={{marginBottom:14}}>
+          <h2>{editMember?"עריכת עובד":"הוספת עובד חדש"}</h2>
+          <div className="form-grid">
+            <label className="wide">שם מלא<input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="שם העובד" /></label>
+            <label className="wide">פרופיל / הערות כלליות<textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="תפקיד, רקע, מצב נוכחי..." style={{minHeight:60}} /></label>
           </div>
-          {m.notes && <p style={{whiteSpace:"pre-wrap",color:"#4f5870",marginBottom:8}}>{m.notes}</p>}
-          {m.actions?.length>0 && <div style={{marginBottom:8}}><b style={{fontSize:12}}>Action Items:</b>{m.actions.map((a,i)=><div key={i} style={{fontSize:12,padding:"2px 0",color:"var(--muted)"}}>{i+1}. {a}</div>)}</div>}
-          {m.targetJobIds?.length>0 && <div style={{marginBottom:8,fontSize:12}}><b>משרות מסומנות: </b>{m.targetJobIds.map(id=>{const j=jobs.find(x=>x.id===id);return j?<span key={id} className="tags" style={{marginLeft:6}}><span>{j.title} · {j.client}</span></span>:null})}</div>}
-          <button className="secondary" style={{fontSize:11}} disabled={searching===m.id} onClick={()=>findMatches(m.id,true)}>{searching===m.id?"מחפש...":"↺ רענון המלצות"}</button>
-          {matchResult[m.id] && <div style={{marginTop:8,background:"#f8f9fb",borderRadius:8,padding:12,whiteSpace:"pre-wrap",fontSize:13,lineHeight:1.7}}>{matchResult[m.id]}</div>}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+            <button className="secondary" onClick={()=>{setShowForm(false);setEditMember(null);}}>ביטול</button>
+            <button className="primary" disabled={!form.name.trim()} onClick={saveMember}>{editMember?"שמירה":"הוספה"}</button>
+          </div>
         </section>
+      )}
+      {members.map(m=>(
+        <TeamMemberCard key={m.id} member={m} jobs={jobs}
+          onEdit={()=>{setEditMember(m);setForm({name:m.name,notes:m.notes});setShowForm(false);}}
+          onDelete={()=>deleteMember(m.id)}
+          onRefresh={fetchMembers}
+        />
       ))}
-      {!members.length && loaded && <div className="empty-inline"><b>אין חברי צוות עדיין</b><span>הוסף חברי צוות כדי לעקוב אחריהם.</span></div>}
+      {!members.length && loaded && <div className="empty-inline"><b>אין עובדים עדיין</b><span>לחץ "עובד חדש" כדי להתחיל.</span></div>}
     </>
   );
 }
