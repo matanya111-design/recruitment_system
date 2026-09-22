@@ -3285,14 +3285,20 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
         </div>
         <div style={{flex:1}}>
           <b style={{fontSize:17}}>{member.name}</b>
-          {member.notes && <p style={{margin:"4px 0 0",fontSize:13,color:"#4f5870",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{member.notes}</p>}
+          {member.notes && (
+            <div style={{marginTop:6}}>
+              <ReadableInterviewSummary text={member.notes} />
+            </div>
+          )}
         </div>
-        <button className="secondary" style={{fontSize:11}} onClick={onEdit}>עריכה</button>
-        <button className="danger-text-button" style={{fontSize:11}} onClick={onDelete}>מחיקה</button>
+        <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
+          <button className="secondary" style={{fontSize:11}} onClick={onEdit}>עריכה</button>
+          <button className="danger-text-button" style={{fontSize:11}} onClick={onDelete}>מחיקה</button>
+        </div>
       </div>
 
       <div className="tabs" style={{marginTop:0,marginBottom:12}}>
-        {([["timeline","ציר זמן"],["meeting","פגישה חדשה"],["insight","סקירת AI"]] as const).map(([k,l])=>(
+        {([["timeline","ציר זמן"],["meeting","פגישה חדשה"],["insight","✦ התאמת משרות + ניתוח AI"]] as const).map(([k,l])=>(
           <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
@@ -3363,9 +3369,14 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
       {tab==="insight" && (
         <div>
           {!matchResult && !analysis && (
-            <div style={{textAlign:"center",padding:"20px 0"}}>
-              <p style={{color:"var(--muted)",marginBottom:12,fontSize:13}}>ה-AI יסרוק את הפרופיל וסיכומי הפגישות ויפיק: התאמת משרות + ניתוח מקצועי</p>
-              <button className="ai-button" disabled={aiRunning} onClick={runInsight}>{aiRunning?"מנתח...":"✦ הפעל סקירת AI"}</button>
+            <div style={{background:"#f8f9fb",borderRadius:10,padding:16,marginBottom:4}}>
+              <b style={{fontSize:14}}>מה הסקירה עושה?</b>
+              <div style={{fontSize:13,color:"#4f5870",marginTop:8,marginBottom:12,lineHeight:1.7}}>
+                <div>🔍 <b>התאמת משרות</b> — בודק אילו משרות פעילות במערכת מתאימות לפרופיל העובד ולסיכומי הפגישות, ומציג ציון התאמה + הסבר.</div>
+                <div style={{marginTop:6}}>📊 <b>ניתוח מקצועי</b> — מסכם חוזקות, פערים, המלצת קידום וצעדים הבאים על בסיס כל המידע הנצבר.</div>
+                <div style={{marginTop:6,color:"var(--muted)",fontSize:12}}>התוצאות נשמרות אוטומטית ונטענות מחדש בכל פתיחה.</div>
+              </div>
+              <button className="ai-button" disabled={aiRunning} onClick={runInsight}>{aiRunning?"מנתח...":"✦ הפעל סקירת AI (התאמת משרות + ניתוח)"}</button>
             </div>
           )}
           {(matchResult || analysis) && (
@@ -3486,7 +3497,19 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
           {(formTab==="manual" || editMember) && (
             <div className="form-grid">
               <label className="wide">שם מלא<input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="שם העובד" /></label>
-              <label className="wide">פרופיל / הערות כלליות<textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="תפקיד, רקע, מצב נוכחי..." style={{minHeight:80}} /></label>
+              <label className="wide">
+                פרופיל / הערות כלליות
+                <div style={{display:"flex",gap:6,marginBottom:4}}>
+                  <button type="button" className="secondary" style={{fontSize:11,padding:"4px 9px"}} disabled={extracting||form.notes.trim().length<20}
+                    onClick={async()=>{ setExtracting(true); setExtractErr("");
+                      try { const r=await fetch("/api/ai-general",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:`ארגן וסדר את הטקסט הגולמי הבא על עובד לפרופיל מובנה וקריא בעברית. השתמש בכותרות קצרות כמו "תפקיד ורקע:", "ניסיון מקצועי:", "כיוון מקצועי:", "מצב נוכחי:" וכו' — רק אם הן רלוונטיות לתוכן. שמור על כל המידע. טקסט: ${form.notes.slice(0,3000)}`})});
+                      const d=await r.json(); if(r.ok&&d.reply) setForm(f=>({...f,notes:d.reply})); } catch{} finally{setExtracting(false);} }}>
+                    {extracting?"מעצב...":"✦ עיצוב AI"}
+                  </button>
+                  <small style={{color:"var(--muted)",alignSelf:"center"}}>ממיר טקסט גולמי לפרופיל מסודר</small>
+                </div>
+                <textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="תפקיד, רקע, מצב נוכחי..." style={{minHeight:100}} />
+              </label>
             </div>
           )}
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
