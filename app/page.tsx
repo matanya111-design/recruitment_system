@@ -1,7 +1,29 @@
 ﻿"use client";
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+
+// Module-level background jobs tracker — survives component unmount
+const bgJobs: Map<string, { label: string; status: "running"|"done"|"error"; result?: unknown; error?: string }> = new Map();
+let bgJobsVersion = 0;
+const bgJobsListeners = new Set<() => void>();
+function notifyBgJobs() { bgJobsVersion++; bgJobsListeners.forEach(fn => fn()); }
+function useBgJobs() {
+  const [, setV] = useState(0);
+  useEffect(() => { const fn = () => setV(v => v + 1); bgJobsListeners.add(fn); return () => { bgJobsListeners.delete(fn); }; }, []);
+  return bgJobs;
+}
+async function runBgJob(key: string, label: string, fn: () => Promise<unknown>) {
+  bgJobs.set(key, { label, status: "running" });
+  notifyBgJobs();
+  try {
+    const result = await fn();
+    bgJobs.set(key, { label, status: "done", result });
+  } catch(e) {
+    bgJobs.set(key, { label, status: "error", error: e instanceof Error ? e.message : "שגיאה" });
+  }
+  notifyBgJobs();
+}
 
 type View = "dashboard" | "jobs" | "job" | "candidates" | "candidate" | "archive" | "guide" | "ai-activity" | "ai-instructions" | "users" | "team" | "general-ai";
 type AiInstruction = { key: string; title: string; description: string; content: string; isCustom: boolean; updatedAt: string };
@@ -215,6 +237,7 @@ export default function Home() {
     "job" | "candidate" | "editJob" | "editCandidate" | null
   >(null);
   const [, setLoginRefresh] = useState(0);
+  const jobs2 = useBgJobs(); // subscribe to background job updates
 
   async function load(silent = false) {
     if (!silent) setLoading(true);
@@ -434,6 +457,12 @@ export default function Home() {
         </nav>
       </aside>
       <main className="main-content">
+        {Array.from(jobs2.values()).filter(j => j.status === "running" || j.status === "done").map((j, i) => (
+          <div key={i} className={`cv-message ${j.status === "running" ? "" : "success"}`} style={{marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span>{j.status === "running" ? `⏳ ${j.label} — רץ ברקע...` : `✓ ${j.label} — הסתיים`}</span>
+            {j.status === "done" && <button style={{border:0,background:"none",cursor:"pointer",color:"inherit",fontSize:16}} onClick={() => { bgJobs.delete(Array.from(bgJobs.keys())[i]); notifyBgJobs(); }}>✕</button>}
+          </div>
+        ))}
         {loading && <div className="loading">טוען נתונים...</div>}
         {error && (
           <div className="error-banner">
@@ -3258,19 +3287,25 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
     await fetch("/api/team/meetings", { method:"DELETE", headers:{"Content-Type":"application/json"}, body:JSON.stringify({meetingId:id}) });
     setMeetings(prev => prev.filter(m=>m.id!==id));
   }
-  async function runInsight() {
+  function runInsight() {
     setAiRunning(true); setErr("");
-    try {
-      // Server runs everything in parallel and saves to DB — survives tab navigation
+    const jobKey = `insight-${member.id}-${Date.now()}`;
+    runBgJob(jobKey, `סקירת AI — ${member.name}`, async () => {
       const r = await fetch("/api/team/run-insight", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ memberId: member.id }) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "שגיאה");
-      const ins = d.insight;
-      setMatchResult({ matches: ins.matches, analysis: ins.analysis });
-      setAnalysis({ strengths: ins.strengths, gaps: ins.gaps, growth_recommendation: ins.growth_recommendation, next_steps: ins.next_steps });
+      return d.insight;
+    }).then(() => {
+      const job = bgJobs.get(jobKey);
+      if (job?.status === "done" && job.result) {
+        const ins = job.result as Record<string, unknown>;
+        setMatchResult({ matches: ins.matches as any, analysis: String(ins.analysis ?? "") });
+        setAnalysis({ strengths: ins.strengths as any, gaps: ins.gaps as any, growth_recommendation: String(ins.growth_recommendation ?? ""), next_steps: ins.next_steps as any });
+      } else if (job?.status === "error") {
+        setErr(job.error ?? "שגיאה");
+      }
       onRefresh();
-    } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
-    finally { setAiRunning(false); }
+    }).finally(() => setAiRunning(false));
   }
 
   return (
