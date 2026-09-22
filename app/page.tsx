@@ -303,11 +303,16 @@ export default function Home() {
         role: a.role, client: a.client, status: a.status, updatedAt: a.updated_at,
       })));
       setAiActivity((d.aiActivity || []).map((x: any) => ({
-        id: Number(x.id), actionType: x.action_type, subjectLabel: x.subject_label,
-        model: x.model, inputTokens: Number(x.input_tokens || 0),
-        cachedInputTokens: Number(x.cached_input_tokens || 0),
-        outputTokens: Number(x.output_tokens || 0),
-        estimatedCostUsd: Number(x.estimated_cost_usd || 0), createdAt: x.created_at,
+        id: Number(x.id),
+        // Drizzle returns camelCase; raw SQL returns snake_case — handle both
+        actionType: x.actionType ?? x.action_type ?? "",
+        subjectLabel: x.subjectLabel ?? x.subject_label ?? "",
+        model: x.model ?? "",
+        inputTokens: Number(x.inputTokens ?? x.input_tokens ?? 0),
+        cachedInputTokens: Number(x.cachedInputTokens ?? x.cached_input_tokens ?? 0),
+        outputTokens: Number(x.outputTokens ?? x.output_tokens ?? 0),
+        estimatedCostUsd: Number(x.estimatedCostUsd ?? x.estimated_cost_usd ?? 0),
+        createdAt: x.createdAt ?? x.created_at ?? "",
       })));
       setAiInstructions((d.aiInstructions || []).map((x: any) => ({
         key: x.key, title: x.title, description: x.description, content: x.content,
@@ -3173,7 +3178,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
   member: TeamMember; jobs: Job[];
   onEdit: () => void; onDelete: () => void; onRefresh: () => void;
 }) {
-  const [tab, setTab] = useState<"timeline"|"meeting"|"match"|"analysis">("timeline");
+  const [tab, setTab] = useState<"timeline"|"meeting"|"insight">("timeline");
   const [meetings, setMeetings] = useState<TeamMeeting[]>([]);
   const [meetingsLoaded, setMeetingsLoaded] = useState(false);
   const [transcript, setTranscript] = useState(""), [meetingDate, setMeetingDate] = useState(() => new Date().toISOString().slice(0,16));
@@ -3183,15 +3188,22 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
   const [matching, setMatching] = useState(false);
   const [analysis, setAnalysis] = useState<{strengths:string[];gaps:string[];growth_recommendation:string;next_steps:string[]}|null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [aiRunning, setAiRunning] = useState(false);
   const [err, setErr] = useState("");
 
-  useEffect(() => { if (tab === "timeline" && !meetingsLoaded) loadMeetings(); }, [tab]);
-  useEffect(() => { if (tab === "match" && !matchResult) runMatch(); }, [tab]);
+  // Load meetings only when first entering timeline or meeting tab
+  useEffect(() => {
+    if ((tab === "timeline" || tab === "meeting") && !meetingsLoaded) loadMeetings();
+  }, [tab]);
 
   async function loadMeetings() {
-    const r = await fetch(`/api/team/meetings?memberId=${member.id}`);
-    const d = await r.json();
-    setMeetings(d.meetings || []); setMeetingsLoaded(true);
+    try {
+      const r = await fetch(`/api/team/meetings?memberId=${member.id}`);
+      if (!r.ok) { setMeetingsLoaded(true); return; }
+      const d = await r.json();
+      setMeetings(d.meetings || []);
+    } catch { /* table may not exist yet, ignore */ }
+    setMeetingsLoaded(true);
   }
   async function summarizeTranscript() {
     if (transcript.trim().length < 30) { setErr("יש להדביק תמלול של לפחות 30 תווים"); return; }
@@ -3218,39 +3230,39 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
     await fetch("/api/team/meetings", { method:"DELETE", headers:{"Content-Type":"application/json"}, body:JSON.stringify({meetingId:id}) });
     setMeetings(prev => prev.filter(m=>m.id!==id));
   }
-  async function runMatch() {
-    setMatching(true); setErr("");
+  async function runInsight() {
+    setAiRunning(true); setErr("");
+    setMatching(true); setAnalyzing(true);
+    const allSummaries = meetings.map(m=>`[${m.meetingDate?.slice(0,10)||""}] ${m.summary}`).join("\n\n");
+    const context = member.notes + (allSummaries ? "\n\nסיכומי פגישות:\n" + allSummaries : "");
     try {
-      const allSummaries = meetings.map(m=>`[${m.meetingDate?.slice(0,10)||""}] ${m.summary}`).join("\n\n");
-      const r = await fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"match-jobs",memberId:member.id,memberName:member.name,memberNotes:member.notes+"\n\n"+allSummaries,jobs:jobs.map(j=>({id:j.id,title:j.title,client:j.client,technologies:j.tech}))}) });
-      const d = await r.json(); if (!r.ok) throw new Error(d.error);
-      setMatchResult(d.result);
+      const [matchRes, analyzeRes] = await Promise.all([
+        fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"match-jobs",memberId:member.id,memberName:member.name,memberNotes:context,jobs:jobs.map(j=>({id:j.id,title:j.title,client:j.client,technologies:j.tech}))}) }),
+        fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"analyze",memberId:member.id,memberName:member.name,memberNotes:context}) }),
+      ]);
+      if (matchRes.ok) { const d = await matchRes.json(); setMatchResult(d.result); }
+      if (analyzeRes.ok) { const d = await analyzeRes.json(); setAnalysis(d.analysis); }
     } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
-    finally { setMatching(false); }
-  }
-  async function runAnalysis() {
-    setAnalyzing(true); setErr("");
-    try {
-      const allSummaries = meetings.map(m=>`[${m.meetingDate?.slice(0,10)||""}] ${m.summary}`).join("\n\n");
-      const r = await fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"analyze",memberId:member.id,memberName:member.name,memberNotes:member.notes+"\n\n"+allSummaries}) });
-      const d = await r.json(); if (!r.ok) throw new Error(d.error);
-      setAnalysis(d.analysis);
-    } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
-    finally { setAnalyzing(false); }
+    finally { setMatching(false); setAnalyzing(false); setAiRunning(false); }
   }
 
   return (
     <section className="panel content-card" style={{marginBottom:14}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-        <div className="avatar violet" style={{width:40,height:40,borderRadius:"50%",display:"grid",placeItems:"center",fontWeight:800,fontSize:14}}>
-          {member.name.split(" ").map(w=>w[0]).join("").slice(0,2)}
+      {/* Profile header — always visible */}
+      <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:14,paddingBottom:14,borderBottom:"1px solid var(--line)"}}>
+        <div className="avatar violet" style={{width:44,height:44,borderRadius:"50%",display:"grid",placeItems:"center",fontWeight:800,fontSize:15,flexShrink:0}}>
+          {member.name.split(" ").map((w:string)=>w[0]).join("").slice(0,2)}
         </div>
-        <div style={{flex:1}}><b style={{fontSize:16}}>{member.name}</b>{member.notes&&<p style={{margin:"2px 0 0",fontSize:12,color:"var(--muted)"}}>{member.notes.slice(0,80)}{member.notes.length>80?"...":""}</p>}</div>
+        <div style={{flex:1}}>
+          <b style={{fontSize:17}}>{member.name}</b>
+          {member.notes && <p style={{margin:"4px 0 0",fontSize:13,color:"#4f5870",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{member.notes}</p>}
+        </div>
         <button className="secondary" style={{fontSize:11}} onClick={onEdit}>עריכה</button>
         <button className="danger-text-button" style={{fontSize:11}} onClick={onDelete}>מחיקה</button>
       </div>
+
       <div className="tabs" style={{marginTop:0,marginBottom:12}}>
-        {([["timeline","ציר זמן"],["meeting","פגישה חדשה"],["match","התאמת משרות"],["analysis","ניתוח AI"]] as const).map(([k,l])=>(
+        {([["timeline","ציר זמן"],["meeting","פגישה חדשה"],["insight","סקירת AI"]] as const).map(([k,l])=>(
           <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
@@ -3261,7 +3273,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
           {!meetingsLoaded && <div style={{color:"var(--muted)",fontSize:13}}>טוען...</div>}
           {meetingsLoaded && meetings.length===0 && <div className="empty-inline"><b>אין פגישות רשומות עדיין</b><span>עבור ל"פגישה חדשה" כדי להוסיף את הפגישה הראשונה.</span></div>}
           {meetings.map(m=>(
-            <div key={m.id} style={{borderRight:"3px solid var(--purple)",paddingRight:14,marginBottom:16,position:"relative"}}>
+            <div key={m.id} style={{borderRight:"3px solid var(--purple)",paddingRight:14,marginBottom:16}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
                 <b style={{fontSize:13}}>{m.meetingDate ? new Date(m.meetingDate).toLocaleDateString("he-IL",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}) : ""}</b>
                 <button className="danger-text-button" style={{fontSize:10,padding:"2px 6px"}} onClick={()=>deleteMeeting(m.id)}>מחיקה</button>
@@ -3270,7 +3282,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
               {(m.actionItems as string[])?.length>0 && (
                 <div style={{fontSize:12}}>
                   <b>Action Items: </b>
-                  {(m.actionItems as string[]).map((a,i)=><span key={i} style={{display:"block",color:"var(--muted)",paddingRight:8}}>{i+1}. {a}</span>)}
+                  {(m.actionItems as string[]).map((a:string,i:number)=><span key={i} style={{display:"block",color:"var(--muted)",paddingRight:8}}>{i+1}. {a}</span>)}
                 </div>
               )}
             </div>
@@ -3280,21 +3292,17 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
 
       {tab==="meeting" && (
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
-            <label style={{fontSize:11,color:"var(--muted)",display:"flex",flexDirection:"column",gap:4}}>
-              תאריך ושעת הפגישה
-              <input type="datetime-local" value={meetingDate} onChange={e=>setMeetingDate(e.target.value)} style={{border:"1px solid #dfe2e9",borderRadius:7,padding:"7px 10px",fontSize:13}} />
-            </label>
-          </div>
+          <label style={{fontSize:11,color:"var(--muted)",display:"flex",flexDirection:"column",gap:4}}>
+            תאריך ושעת הפגישה
+            <input type="datetime-local" value={meetingDate} onChange={e=>setMeetingDate(e.target.value)} style={{width:"fit-content",border:"1px solid #dfe2e9",borderRadius:7,padding:"7px 10px",fontSize:13}} />
+          </label>
           <label style={{fontSize:11,color:"var(--muted)",display:"flex",flexDirection:"column",gap:4}}>
             תמלול / הערות הפגישה
-            <div style={{display:"flex",gap:6,marginBottom:4}}>
-              <label className="secondary" style={{cursor:"pointer",fontSize:12,padding:"6px 10px",display:"inline-flex",alignItems:"center",gap:5,borderRadius:7,border:"1px solid #dfe2e9"}}>
-                📎 קובץ
-                <input type="file" accept=".txt,.docx,.doc" style={{display:"none"}} onChange={async e=>{const f=e.target.files?.[0];if(f&&f.name.endsWith(".txt"))setTranscript(await f.text());e.target.value="";}} />
-              </label>
-            </div>
-            <textarea value={transcript} onChange={e=>setTranscript(e.target.value)} placeholder="הדבק תמלול Teams, הערות חופשיות, או העלה קובץ .txt..." style={{minHeight:140,border:"1px solid #dfe2e9",borderRadius:8,padding:10,font:"inherit",resize:"vertical"}} />
+            <label className="secondary" style={{cursor:"pointer",fontSize:12,padding:"6px 10px",width:"fit-content",display:"inline-flex",alignItems:"center",gap:5,borderRadius:7,border:"1px solid #dfe2e9",marginBottom:4}}>
+              📎 העלאת קובץ .txt
+              <input type="file" accept=".txt" style={{display:"none"}} onChange={async e=>{const f=e.target.files?.[0];if(f)setTranscript(await f.text());e.target.value="";}} />
+            </label>
+            <textarea value={transcript} onChange={e=>setTranscript(e.target.value)} placeholder="הדבק תמלול Teams, הערות חופשיות..." style={{minHeight:140,border:"1px solid #dfe2e9",borderRadius:8,padding:10,font:"inherit",resize:"vertical"}} />
           </label>
           <div style={{display:"flex",gap:8}}>
             <button className="ai-button" disabled={summarizing||transcript.trim().length<30} onClick={summarizeTranscript}>{summarizing?"מסכם...":"✦ יצירת סיכום באמצעות AI"}</button>
@@ -3307,13 +3315,13 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
               </div>
               <label style={{fontSize:11,color:"var(--muted)",display:"block",marginBottom:8}}>
                 סיכום
-                <textarea value={draft.summary} onChange={e=>setDraft(d=>d?{...d,summary:e.target.value}:d)} style={{width:"100%",minHeight:100,border:"1px solid #dfe2e9",borderRadius:8,padding:8,font:"inherit",marginTop:4,resize:"vertical"}} />
+                <textarea value={draft.summary} onChange={e=>setDraft((d:any)=>d?{...d,summary:e.target.value}:d)} style={{width:"100%",minHeight:100,border:"1px solid #dfe2e9",borderRadius:8,padding:8,font:"inherit",marginTop:4,resize:"vertical"}} />
               </label>
               {draft.insights && <p style={{fontSize:12,color:"#6855cc",background:"#f0edff",borderRadius:7,padding:"8px 10px",margin:"0 0 8px"}}><b>תובנה: </b>{draft.insights}</p>}
               {draft.action_items?.length>0 && (
                 <div style={{fontSize:12,marginBottom:8}}>
                   <b>Action Items שזוהו:</b>
-                  {draft.action_items.map((a,i)=><div key={i} style={{padding:"2px 0 2px 4px",color:"var(--muted)"}}>{i+1}. {a}</div>)}
+                  {draft.action_items.map((a:string,i:number)=><div key={i} style={{padding:"2px 0 2px 4px",color:"var(--muted)"}}>{i+1}. {a}</div>)}
                 </div>
               )}
               <button className="primary" disabled={saving||!draft.summary.trim()} onClick={saveMeeting}>{saving?"שומר...":"שמירת הפגישה בציר הזמן"}</button>
@@ -3322,56 +3330,56 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
         </div>
       )}
 
-      {tab==="match" && (
+      {tab==="insight" && (
         <div>
-          {matching && <div style={{color:"var(--muted)",fontSize:13}}>מחפש התאמות...</div>}
-          {!matching && !matchResult && <button className="ai-button" onClick={runMatch}>✦ מצא משרות מתאימות</button>}
-          {matchResult && (
-            <div>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
-                <b>התאמות מהמאגר</b>
-                <button className="secondary" style={{fontSize:11}} onClick={()=>{setMatchResult(null);runMatch();}}>↺ רענון</button>
-              </div>
-              {matchResult.analysis && <p style={{fontSize:13,color:"#4f5870",marginBottom:10,background:"#f8f9fb",borderRadius:8,padding:10}}>{matchResult.analysis}</p>}
-              {matchResult.matches.map((m,i)=>(
-                <div key={i} style={{border:"1px solid #e8eaf0",borderRadius:9,padding:12,marginBottom:8}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                    <b>{m.job_title} · {m.client}</b>
-                    <span className={`score ${m.fit_score>=80?"high":m.fit_score>=65?"mid":"low"}`}>{m.fit_score}</span>
-                  </div>
-                  <p style={{margin:0,fontSize:13,color:"#596174"}}>{m.reason}</p>
-                </div>
-              ))}
-              {!matchResult.matches.length && <p style={{color:"var(--muted)"}}>לא נמצאו התאמות מתאימות בין פרופיל העובד למשרות הפעילות.</p>}
+          {!matchResult && !analysis && (
+            <div style={{textAlign:"center",padding:"20px 0"}}>
+              <p style={{color:"var(--muted)",marginBottom:12,fontSize:13}}>ה-AI יסרוק את הפרופיל וסיכומי הפגישות ויפיק: התאמת משרות + ניתוח מקצועי</p>
+              <button className="ai-button" disabled={aiRunning} onClick={runInsight}>{aiRunning?"מנתח...":"✦ הפעל סקירת AI"}</button>
             </div>
           )}
-        </div>
-      )}
-
-      {tab==="analysis" && (
-        <div>
-          {!analysis && <button className="ai-button" disabled={analyzing} onClick={runAnalysis}>{analyzing?"מנתח...":"✦ ניתוח AI של הפרופיל"}</button>}
-          {analysis && (
+          {(matchResult || analysis) && (
             <div>
-              <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
-                <button className="secondary" style={{fontSize:11}} onClick={()=>{setAnalysis(null);runAnalysis();}}>↺ רענון</button>
+              <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
+                <button className="secondary" style={{fontSize:11}} disabled={aiRunning} onClick={()=>{setMatchResult(null);setAnalysis(null);runInsight();}}>{aiRunning?"מרענן...":"↺ רענון"}</button>
               </div>
-              <div style={{marginBottom:12}}>
-                <b style={{fontSize:13,color:"var(--green)"}}>חוזקות</b>
-                {analysis.strengths.map((s,i)=><div key={i} style={{fontSize:13,padding:"3px 0",color:"#4f5870"}}>• {s}</div>)}
-              </div>
-              <div style={{marginBottom:12}}>
-                <b style={{fontSize:13,color:"var(--orange)"}}>פערים ואתגרים</b>
-                {analysis.gaps.map((g,i)=><div key={i} style={{fontSize:13,padding:"3px 0",color:"#4f5870"}}>• {g}</div>)}
-              </div>
-              <div style={{marginBottom:12,background:"#f0edff",borderRadius:8,padding:10}}>
-                <b style={{fontSize:13,color:"var(--purple)"}}>המלצת קידום מקצועי</b>
-                <p style={{margin:"4px 0 0",fontSize:13,color:"#4f5870"}}>{analysis.growth_recommendation}</p>
-              </div>
-              <div>
-                <b style={{fontSize:13}}>צעדים הבאים מומלצים</b>
-                {analysis.next_steps.map((s,i)=><div key={i} style={{fontSize:13,padding:"3px 0",color:"#4f5870"}}>{i+1}. {s}</div>)}
-              </div>
+              {matchResult && (
+                <div style={{marginBottom:16}}>
+                  <b style={{fontSize:14}}>התאמת משרות מהמאגר</b>
+                  {matchResult.analysis && <p style={{fontSize:13,color:"#4f5870",margin:"6px 0 10px",background:"#f8f9fb",borderRadius:8,padding:10}}>{matchResult.analysis}</p>}
+                  {matchResult.matches.map((m,i)=>(
+                    <div key={i} style={{border:"1px solid #e8eaf0",borderRadius:9,padding:12,marginBottom:8}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                        <b style={{fontSize:13}}>{m.job_title} · {m.client}</b>
+                        <span className={`score ${m.fit_score>=80?"high":m.fit_score>=65?"mid":"low"}`}>{m.fit_score}</span>
+                      </div>
+                      <p style={{margin:0,fontSize:13,color:"#596174"}}>{m.reason}</p>
+                    </div>
+                  ))}
+                  {!matchResult.matches.length && <p style={{color:"var(--muted)",fontSize:13}}>לא נמצאו התאמות טובות.</p>}
+                </div>
+              )}
+              {analysis && (
+                <div>
+                  <b style={{fontSize:14}}>ניתוח מקצועי</b>
+                  <div style={{marginTop:8,marginBottom:10}}>
+                    <b style={{fontSize:13,color:"var(--green)"}}>חוזקות</b>
+                    {analysis.strengths.map((s,i)=><div key={i} style={{fontSize:13,padding:"2px 0",color:"#4f5870"}}>• {s}</div>)}
+                  </div>
+                  <div style={{marginBottom:10}}>
+                    <b style={{fontSize:13,color:"var(--orange)"}}>פערים ואתגרים</b>
+                    {analysis.gaps.map((g,i)=><div key={i} style={{fontSize:13,padding:"2px 0",color:"#4f5870"}}>• {g}</div>)}
+                  </div>
+                  <div style={{marginBottom:10,background:"#f0edff",borderRadius:8,padding:10}}>
+                    <b style={{fontSize:13,color:"var(--purple)"}}>המלצת קידום</b>
+                    <p style={{margin:"4px 0 0",fontSize:13,color:"#4f5870"}}>{analysis.growth_recommendation}</p>
+                  </div>
+                  <div>
+                    <b style={{fontSize:13}}>צעדים הבאים</b>
+                    {analysis.next_steps.map((s,i)=><div key={i} style={{fontSize:13,padding:"2px 0",color:"#4f5870"}}>{i+1}. {s}</div>)}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
