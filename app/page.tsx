@@ -1,9 +1,9 @@
-"use client";
+﻿"use client";
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
 
 import { useEffect, useMemo, useState } from "react";
 
-type View = "dashboard" | "jobs" | "job" | "candidates" | "candidate" | "archive" | "guide" | "ai-activity" | "ai-instructions" | "users";
+type View = "dashboard" | "jobs" | "job" | "candidates" | "candidate" | "archive" | "guide" | "ai-activity" | "ai-instructions" | "users" | "team" | "general-ai";
 type AiInstruction = { key: string; title: string; description: string; content: string; isCustom: boolean; updatedAt: string };
 type CurrentUser = { email: string; name: string; isAuthenticated: boolean; isAllowed: boolean; isAdmin: boolean };
 type AppUser = { email: string; role: "admin" | "user"; createdAt: string; updatedAt: string };
@@ -371,6 +371,8 @@ export default function Home() {
     { key: "archive" as View, label: "ארכיון", icon: "▤", badge: archivedJobs.length + archivedApplications.length },
     { key: "guide" as View, label: "מדריך ותיעוד", icon: "?" },
     { key: "ai-activity" as View, label: "פעילות AI ועלויות", icon: "✦" },
+    { key: "general-ai" as View, label: "שאילתות AI כלליות", icon: "⊕" },
+    { key: "team" as View, label: "ניהול צוות", icon: "♖" },
     ...(currentUser.isAdmin ? [
       { key: "users" as View, label: "משתמשים והרשאות", icon: "♚" },
       { key: "ai-instructions" as View, label: "הוראות AI", icon: "⚙" },
@@ -567,6 +569,8 @@ export default function Home() {
               />
             )}
             {view === "ai-activity" && <AiActivityPage rows={aiActivity} />}
+            {view === "general-ai" && <GeneralAiPage jobs={jobs} candidates={candidates} />}
+            {view === "team" && <TeamPage jobs={jobs} />}
             {view === "ai-instructions" && currentUser.isAdmin && (
               <AiInstructionsPage
                 rows={aiInstructions}
@@ -1027,6 +1031,26 @@ function JobPage({
   );
 }
 
+function useSortable<T>(rows: T[], defaultKey: keyof T) {
+  const [sortKey, setSortKey] = useState<keyof T>(defaultKey);
+  const [sortDir, setSortDir] = useState<"asc"|"desc">("asc");
+  function toggle(key: keyof T) { if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortKey(key); setSortDir("asc"); } }
+  const sorted = [...rows].sort((a, b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    const cmp = String(av).localeCompare(String(bv), "he", { numeric: true });
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+  const SortBtn = ({ col }: { col: keyof T; label?: string }) => (
+    <button className="sort-head" onClick={() => toggle(col)}>
+      {sortKey === col ? (sortDir === "asc" ? " ▲" : " ▼") : " ⇅"}
+    </button>
+  );
+  return { sorted, sortKey, sortDir, toggle, SortBtn };
+}
+
 function Candidates({
   rows,
   total,
@@ -1276,7 +1300,7 @@ function CandidatePage({
       await save({
         interviewSummary: summary,
       });
-      setTab("evaluation");
+      setTab("eval-post");
     } finally {
       setSaving(false);
     }
@@ -1319,6 +1343,12 @@ function CandidatePage({
     }
   }
   async function changeStatus(nextStatus: string) {
+    if (nextStatus === "הפסיק תהליך") {
+      const reason = prompt("מה הסיבה להפסקת התהליך? (יישמר בהערות)");
+      if (reason === null) return; // cancelled
+      await save({ status: nextStatus, nextAction: reason ? `הפסיק תהליך: ${reason}` : "הפסיק תהליך", nextActionDate: null });
+      return;
+    }
     const warnings: string[] = [];
     if (nextStatus === "מיועד לראיון" && !c.interview) warnings.push("לא הוזנו תאריך ושעת ראיון");
     if (["ראיון בוצע", "עבר ראיון", "הועבר ללקוח", "בתהליך אצל הלקוח", "התקבל"].includes(nextStatus) && !c.interviewSummary)
@@ -1373,6 +1403,7 @@ function CandidatePage({
                 "בתהליך אצל הלקוח",
                 "התקבל",
                 "נדחה",
+                "הפסיק תהליך",
               ].map((s) => (
                 <option key={s}>{s}</option>
               ))}
@@ -1396,55 +1427,36 @@ function CandidatePage({
       <section className="applications-panel panel">
         <div className="applications-head">
           <div>
-            <h2>מועמדויות</h2>
+            <h2>מועמדות למשרה: {c.role} · {c.client}</h2>
             <p>לכל משרה נשמרים בנפרד הסטטוס, הראיון והערכת ה-AI.</p>
           </div>
           {availableJobs.length > 0 && (
             <div className="add-application">
-              <select
-                value={addJobId}
-                onChange={(e) => setAddJobId(Number(e.target.value))}
-              >
-                <option value="0">בחירת משרה נוספת...</option>
+              <select value={addJobId} onChange={(e) => setAddJobId(Number(e.target.value))}>
+                <option value="0">שיוך למשרה נוספת...</option>
                 {availableJobs.map((j) => (
-                  <option key={j.id} value={j.id}>
-                    {j.title} · {j.client}
-                  </option>
+                  <option key={j.id} value={j.id}>{j.title} · {j.client}</option>
                 ))}
               </select>
-              <button
-                className="secondary"
-                disabled={!addJobId || adding}
-                onClick={addToJob}
-              >
-                {adding ? "מוסיף..." : "הוספה למשרה"}
+              <button className="secondary" disabled={!addJobId || adding} onClick={addToJob}>
+                {adding ? "משייך..." : "שיוך למשרה נוספת"}
               </button>
             </div>
           )}
         </div>
-        <div className="application-cards">
-          {applications.map((a) => (
-            <button
-              key={a.applicationId}
-              className={a.applicationId === c.applicationId ? "active" : ""}
-              onClick={() => selectApplication(a)}
-            >
-              <span>{a.role}</span>
-              <small>{a.client}</small>
-              <div>
-                <em className={`pill ${statusClass(a.status)}`}>{a.status}</em>
-                {a.score === null ? <b>טרם הוערך</b> : <b>ציון {a.score}</b>}
-              </div>
-            </button>
-          ))}
-        </div>
+        {applications.length > 1 && (
+          <div style={{padding:"0 18px 12px",fontSize:12,color:"var(--muted)"}}>
+            מועמד זה מופיע גם במשרות: {applications.filter(a=>a.applicationId!==c.applicationId).map(a=><a key={a.applicationId} href="#" style={{color:"var(--purple)",marginLeft:8}} onClick={e=>{e.preventDefault();selectApplication(a)}}>{a.role} · {a.client}</a>)}
+          </div>
+        )}
       </section>
       <div className="tabs">
         {[
           ["overview", "סקירה"],
           ["cv", "קורות חיים"],
           ["interview", "סיכום ראיון"],
-          ["evaluation", "הערכת AI"],
+          ["eval-pre", "הערכה לפני ראיון"],
+          ["eval-post", "הערכה לאחר ראיון"],
         ].map(([k, l]) => (
           <button
             key={k}
@@ -1600,9 +1612,18 @@ function CandidatePage({
         <div className="interview-workspace">
           <section className="panel editor-panel raw-interview-panel">
             <h2>יצירת סיכום מחומר גלם באמצעות AI</h2>
-            <p>הדבק תמלול Teams, הערות חופשיות או שילוב שלהם. ה-AI יכין טיוטה בלבד ולא ישנה את הסיכום המאושר ללא אישורך.</p>
+            <p>הדבק תמלול Teams, הערות חופשיות, או העלה קובץ טקסט/Word (.txt, .docx). ה-AI יכין טיוטה בלבד ולא ישנה את הסיכום המאושר ללא אישורך.</p>
             <textarea value={rawInterview} onChange={(e) => setRawInterview(e.target.value)} placeholder="הדבק כאן את חומר הגלם מהראיון..." />
-            <div className="editor-actions">
+            <div className="editor-actions" style={{flexWrap:"wrap",gap:8}}>
+              <label className="secondary" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6}}>
+                📎 העלאת קובץ תמלול
+                <input type="file" accept=".txt,.docx,.doc,.pdf" style={{display:"none"}} onChange={async (ev) => {
+                  const f = ev.target.files?.[0]; if (!f) return;
+                  if (f.name.endsWith(".txt")) { setRawInterview(await f.text()); }
+                  else { setRawInterview(`[קובץ ${f.name} — ${(f.size/1024).toFixed(0)} KB. אנא הדבק את תוכן הקובץ ידנית כטקסט.]`); }
+                  ev.target.value = "";
+                }} />
+              </label>
               <button className="ai-button inline-ai" disabled={summarizing || rawInterview.trim().length < 50} onClick={createInterviewDraft}>
                 {summarizing ? "מכין טיוטה..." : "יצירת טיוטת סיכום באמצעות AI"}
               </button>
@@ -1632,7 +1653,8 @@ function CandidatePage({
           </section>
         </div>
       )}
-      {tab === "evaluation" && <Evaluation c={c} refresh={refresh} />}
+      {tab === "eval-pre" && <Evaluation c={c} refresh={refresh} mode="pre" />}
+      {tab === "eval-post" && <Evaluation c={c} refresh={refresh} mode="post" />}
     </>
   );
 }
@@ -1954,22 +1976,30 @@ function CvPanel({
 function Evaluation({
   c,
   refresh,
+  mode = "pre",
 }: {
   c: Candidate;
   refresh: () => Promise<void>;
+  mode?: "pre" | "post";
 }) {
   const [running, setRunning] = useState(false),
     [error, setError] = useState(""),
     [feedback, setFeedback] = useState(c.evaluationFeedback || ""),
     [feedbackSent, setFeedbackSent] = useState(false),
     [ruleUpdating, setRuleUpdating] = useState(false);
-  const e = c.evaluation;
   useEffect(() => {
     setFeedback(c.evaluationFeedback || "");
     setFeedbackSent(false);
   }, [c.applicationId]);
-  const sources = `דרישות המשרה + קורות חיים${c.recruiterOpinion ? " + חוות דעת מגייס" : ""}${(!e ? c.interviewSummary : c.evaluationType === "לאחר ראיון") ? " + סיכום ראיון מקצועי" : ""}`;
-  const needsFinalEvaluation = Boolean(e && c.interviewSummary && c.evaluationType !== "לאחר ראיון");
+  const isPostMode = mode === "post";
+  const rawEval = c.evaluation;
+  // Each mode shows only its own evaluation type
+  const relevantEval: EvaluationResult | null = isPostMode
+    ? (c.evaluationType === "לאחר ראיון" ? rawEval : null)
+    : (c.evaluationType !== "לאחר ראיון" ? rawEval : null);
+  const sources = `דרישות המשרה + קורות חיים${c.recruiterOpinion ? " + חוות דעת מגייס" : ""}${(isPostMode || c.evaluationType === "לאחר ראיון") ? " + סיכום ראיון מקצועי" : ""}`;
+  const needsFinalEvaluation = Boolean(!isPostMode && rawEval && c.interviewSummary && c.evaluationType !== "לאחר ראיון");
+  const showNoInterviewWarning = isPostMode && !c.interviewSummary;
   async function run(reviewerFeedback = "") {
     setRunning(true);
     setError("");
@@ -2011,17 +2041,26 @@ function Evaluation({
       setRuleUpdating(false);
     }
   }
-  if (!e)
+  if (showNoInterviewWarning)
+    return (
+      <div className="evaluation-page">
+        <section className="panel evaluation-empty">
+          <span>📋</span>
+          <h2>הערכה לאחר ראיון</h2>
+          <p>הערכה זו תופעל לאחר שסיכום הראיון המקצועי ייכתב ויאושר בלשונית "סיכום ראיון".</p>
+        </section>
+      </div>
+    );
+  if (!relevantEval)
     return (
       <div className="evaluation-page">
         <section className="panel evaluation-empty">
           <span>✦</span>
-          <h2>{c.interviewSummary ? "הערכת מועמד לאחר ראיון באמצעות AI" : "הערכת התאמה לפני ראיון באמצעות AI"}</h2>
+          <h2>{isPostMode ? "הערכת מועמד לאחר ראיון באמצעות AI" : "הערכת התאמה לפני ראיון באמצעות AI"}</h2>
           <p>
             המערכת תנתח את דרישות המשרה, קורות החיים
             {c.recruiterOpinion ? ", חוות דעת המגייס" : ""}
-            {c.interviewSummary ? " וסיכום הראיון המקצועי" : ""} לפי הוראות ״בודק התאמת
-            מועמדים״.
+            {isPostMode ? " וסיכום הראיון המקצועי" : ""} לפי הוראות ״בודק התאמת מועמדים״.
           </p>
           <div className="evaluation-source wide-source">
             <b>מקורות שיועברו לניתוח</b>
@@ -2029,18 +2068,18 @@ function Evaluation({
           </div>
           <button
             className="primary"
-            disabled={running || !c.cvTextLength}
+            disabled={running || !c.cvTextLength || (isPostMode && !c.interviewSummary)}
             onClick={() => run()}
           >
-            {running ? "מנתח את ההתאמה..." : c.interviewSummary ? "הפעלת הערכה לאחר ראיון" : "הפעלת הערכה לפני ראיון"}
+            {running ? "מנתח את ההתאמה..." : isPostMode ? "הפעלת הערכה לאחר ראיון" : "הפעלת הערכה לפני ראיון"}
           </button>
-          {!c.cvTextLength && (
-            <small>יש להעלות קורות חיים ולחלץ מהם טקסט תחילה.</small>
-          )}
+          {!c.cvTextLength && <small>יש להעלות קורות חיים ולחלץ מהם טקסט תחילה.</small>}
+          {isPostMode && !c.interviewSummary && <small>יש להשלים ולאשר סיכום ראיון תחילה.</small>}
           {error && <div className="cv-message error">{error}</div>}
         </section>
       </div>
     );
+  const e = relevantEval!;
   const recruitmentEmail = c.evaluationType === "לאחר ראיון"
     ? e.recruitment_email
     : e.recruitment_email.replace(/\n*שינויים מומלצים בקורות החיים[\s\S]*$/u, "").trim();
@@ -3045,6 +3084,148 @@ function UsageGuide({ setView }: { setView: (v: View) => void }) {
           </div>
         </section>
       </div>
+    </>
+  );
+}
+
+function EmailChatPanel({ recruitmentEmail, candidateName, jobTitle, jobClient, applicationId, evalType }: {
+  recruitmentEmail: string; candidateName: string; jobTitle: string; jobClient: string; applicationId: number; evalType: string;
+}) {
+  const [messages, setMessages] = useState<Array<{role:"user"|"assistant";text:string}>>([{role:"assistant",text:recruitmentEmail}]);
+  const [input, setInput] = useState(""), [sending, setSending] = useState(false);
+  async function send() {
+    if (!input.trim()) return;
+    const userMsg = input.trim(); setInput(""); setSending(true);
+    const newMessages = [...messages, {role:"user" as const, text:userMsg}];
+    setMessages(newMessages);
+    try {
+      const r = await fetch("/api/ai-chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ applicationId, messages: newMessages, evalType }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "שגיאה");
+      setMessages(prev => [...prev, {role:"assistant", text:d.reply}]);
+    } catch(e) { setMessages(prev => [...prev, {role:"assistant", text:`שגיאה: ${e instanceof Error ? e.message : "לא ידוע"}`}]); }
+    finally { setSending(false); }
+  }
+  return (
+    <div className="recruitment-mail">
+      <p className="mail-purpose">מייל מוכן להעתקה. ניתן להמשיך שיח עם ה-AI לשיפור הניסוח.</p>
+      <div className="email-chat-history">
+        {messages.map((m,i)=>(
+          <div key={i} className={`email-chat-msg ${m.role}`}>
+            {m.role==="assistant" && <div className="email-chat-actions"><button className="secondary" style={{fontSize:11,padding:"3px 8px"}} onClick={()=>navigator.clipboard.writeText(m.text)}>העתקה</button></div>}
+            <pre>{m.text}</pre>
+          </div>
+        ))}
+      </div>
+      <div className="email-chat-input">
+        <textarea value={input} onChange={e=>setInput(e.target.value)} placeholder='למשל: "שנה את הניסוח לפחות רשמי" / "הוסף שהמועמד זמין להתחלה מיידית"' rows={2} onKeyDown={e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey))send();}} />
+        <button className="ai-button" disabled={sending||!input.trim()} onClick={send}>{sending?"שולח...":"✦ שליחה"}</button>
+      </div>
+      <small style={{color:"var(--muted)"}}>Ctrl+Enter לשליחה מהירה</small>
+    </div>
+  );
+}
+function GeneralAiPage({ jobs, candidates }: { jobs: Job[]; candidates: Candidate[] }) {
+  const [query, setQuery] = useState(""), [reply, setReply] = useState(""), [loading, setLoading] = useState(false), [error, setError] = useState("");
+  async function ask() {
+    if (!query.trim()) return;
+    setLoading(true); setError(""); setReply("");
+    try {
+      const r = await fetch("/api/ai-general", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ query, jobsCount: jobs.length, candidatesCount: new Set(candidates.map(c=>c.id)).size }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "שגיאה");
+      setReply(d.reply);
+    } catch(e) { setError(e instanceof Error ? e.message : "שגיאה"); }
+    finally { setLoading(false); }
+  }
+  return (
+    <>
+      <Heading title="שאילתות AI כלליות" subtitle="שאל שאלות על המערכת, בקש סיכומים, השוואות, או כל ניתוח על המועמדים והמשרות." />
+      <section className="panel content-card">
+        <p style={{margin:"0 0 12px",color:"var(--muted)"}}>בסיס הנתונים: <b>{jobs.filter(j=>j.status==="פעילה").length}</b> משרות פעילות, <b>{new Set(candidates.map(c=>c.id)).size}</b> מועמדים.</p>
+        <textarea value={query} onChange={e=>setQuery(e.target.value)} placeholder='למשל: "סכם לי את כל המועמדים שמחכים להחלטה" / "אילו מועמדים מתאימים גם למשרת ה-MLE?"' style={{minHeight:100,width:"100%",border:"1px solid #dfe2e9",borderRadius:8,padding:10}} />
+        <div style={{marginTop:10,display:"flex",gap:8}}>
+          <button className="ai-button" disabled={loading||!query.trim()} onClick={ask}>{loading?"מעבד...":"✦ שאל את ה-AI"}</button>
+        </div>
+        {error && <div className="cv-message error" style={{marginTop:10}}>{error}</div>}
+        {reply && <div style={{marginTop:16,background:"#f8f9fb",borderRadius:8,padding:16,whiteSpace:"pre-wrap",lineHeight:1.8}}>{reply}</div>}
+      </section>
+    </>
+  );
+}
+
+function TeamPage({ jobs }: { jobs: Job[] }) {
+  const [members, setMembers] = useState<Array<{id:number;name:string;notes:string;targetJobIds:number[];actions:string[];createdAt:string}>>([]);
+  const [loaded, setLoaded] = useState(false), [loading, setLoading] = useState(false);
+  const [editId, setEditId] = useState<number|null>(null);
+  const [form, setForm] = useState({name:"",notes:"",targetJobIds:[] as number[],actions:[] as string[]});
+  const [newAction, setNewAction] = useState("");
+  const [searching, setSearching] = useState<number|null>(null), [matchResult, setMatchResult] = useState<Record<number,string>>({});
+  useEffect(() => { fetchMembers(); }, []);
+  async function fetchMembers() {
+    setLoading(true);
+    try { const r = await fetch("/api/team"); const d = await r.json(); if (r.ok) setMembers(d.members || []); }
+    finally { setLoading(false); setLoaded(true); }
+  }
+  async function saveMember() {
+    const r = await fetch("/api/team", { method: editId ? "PATCH" : "POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(editId ? {...form,id:editId} : form) });
+    if (r.ok) { await fetchMembers(); setEditId(null); setForm({name:"",notes:"",targetJobIds:[],actions:[]}); }
+  }
+  async function deleteMember(id:number) {
+    if (!confirm("למחוק את חבר הצוות?")) return;
+    await fetch("/api/team", { method:"DELETE", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
+    await fetchMembers();
+  }
+  async function findMatches(memberId:number) {
+    setSearching(memberId);
+    try {
+      const r = await fetch("/api/ai-general", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ teamMemberId: memberId, jobsCount: jobs.length }) });
+      const d = await r.json();
+      setMatchResult(prev => ({...prev, [memberId]: d.reply || ""}));
+    } finally { setSearching(null); }
+  }
+  if (loading && !loaded) return <div className="loading">טוען...</div>;
+  return (
+    <>
+      <Heading title="ניהול צוות" subtitle="מעקב אחר עובדים ומועמדים פנימיים, יעדים ומשרות מתאימות." />
+      <section className="panel content-card" style={{marginBottom:16}}>
+        <h2>{editId ? "עריכת חבר צוות" : "הוספת חבר צוות חדש"}</h2>
+        <div className="form-grid">
+          <label className="wide">שם מלא<input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="שם העובד" /></label>
+          <label className="wide">סיכום שיחה אישית<textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="מה דיברתם, יעדים, מצב..." style={{minHeight:80}} /></label>
+          <label className="wide">משרות פוטנציאלית מתאימות
+            <select multiple value={form.targetJobIds.map(String)} onChange={e=>setForm(f=>({...f,targetJobIds:Array.from(e.target.selectedOptions,o=>Number(o.value))}))}>
+              {jobs.map(j=><option key={j.id} value={j.id}>{j.title} · {j.client}</option>)}
+            </select>
+          </label>
+          <label className="wide">Action Items
+            <div style={{display:"flex",gap:6,marginBottom:6}}>
+              <input value={newAction} onChange={e=>setNewAction(e.target.value)} placeholder="הוסף Action Item..." onKeyDown={e=>{ if(e.key==="Enter"&&newAction.trim()){setForm(f=>({...f,actions:[...f.actions,newAction.trim()]}));setNewAction("");e.preventDefault();}}} />
+              <button type="button" className="secondary" onClick={()=>{if(newAction.trim()){setForm(f=>({...f,actions:[...f.actions,newAction.trim()]}));setNewAction("");}}}>הוסף</button>
+            </div>
+            {form.actions.map((a,i)=><div key={i} style={{display:"flex",gap:6,marginBottom:4}}><span style={{flex:1}}>{a}</span><button type="button" className="danger-text-button" style={{fontSize:11}} onClick={()=>setForm(f=>({...f,actions:f.actions.filter((_,j)=>j!==i)}))}>✕</button></div>)}
+          </label>
+        </div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+          {editId && <button className="secondary" onClick={()=>{setEditId(null);setForm({name:"",notes:"",targetJobIds:[],actions:[]});}}>ביטול</button>}
+          <button className="primary" disabled={!form.name.trim()} onClick={saveMember}>{editId?"שמירה":"הוספה"}</button>
+        </div>
+      </section>
+      {members.map(m=>(
+        <section key={m.id} className="panel content-card" style={{marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+            <h2 style={{margin:0,flex:1}}>{m.name}</h2>
+            <button className="secondary" style={{fontSize:11}} onClick={()=>{setEditId(m.id);setForm({name:m.name,notes:m.notes,targetJobIds:m.targetJobIds,actions:m.actions||[]});}}>עריכה</button>
+            <button className="danger-text-button" style={{fontSize:11}} onClick={()=>deleteMember(m.id)}>מחיקה</button>
+          </div>
+          {m.notes && <p style={{whiteSpace:"pre-wrap",color:"#4f5870",marginBottom:8}}>{m.notes}</p>}
+          {m.actions?.length>0 && <div style={{marginBottom:8}}><b style={{fontSize:12}}>Action Items:</b>{m.actions.map((a,i)=><div key={i} style={{fontSize:12,padding:"2px 0",color:"var(--muted)"}}>{i+1}. {a}</div>)}</div>}
+          {m.targetJobIds?.length>0 && <div style={{marginBottom:8,fontSize:12}}><b>משרות מסומנות: </b>{m.targetJobIds.map(id=>{const j=jobs.find(x=>x.id===id);return j?<span key={id} className="tags" style={{marginLeft:6}}><span>{j.title} · {j.client}</span></span>:null})}</div>}
+          <button className="ai-button" style={{fontSize:12}} disabled={searching===m.id} onClick={()=>findMatches(m.id)}>{searching===m.id?"מחפש...":"✦ חפש משרות מתאימות ב-AI"}</button>
+          {matchResult[m.id] && <div style={{marginTop:8,background:"#f8f9fb",borderRadius:8,padding:12,whiteSpace:"pre-wrap",fontSize:13,lineHeight:1.7}}>{matchResult[m.id]}</div>}
+        </section>
+      ))}
+      {!members.length && loaded && <div className="empty-inline"><b>אין חברי צוות עדיין</b><span>הוסף חברי צוות כדי לעקוב אחריהם.</span></div>}
     </>
   );
 }

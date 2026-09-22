@@ -1,4 +1,4 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 :root { --ink:#172033; --muted:#687086; --line:#e6e9f0; --bg:#f5f6f9; --purple:#6857d9; --purple-soft:#f0edff; --green:#1c9a69; --green-soft:#e9f8f1; --orange:#d27a20; --orange-soft:#fff3e5; --blue:#367bd3; --blue-soft:#eaf3ff; }
 * { box-sizing:border-box; }
@@ -53,3 +53,4 @@ button { cursor:pointer; }
 .interview-schedule-control{display:grid;grid-template-columns:145px 92px auto;gap:6px 8px;align-items:end}.interview-schedule-control label{min-width:0}.interview-schedule-control>small{grid-column:1/-1;color:#8c92a0;font-size:10px}.interview-schedule-control .schedule-save{height:44px;white-space:nowrap}.interview-schedule-control .schedule-save:disabled{opacity:.5;cursor:not-allowed}
 @media(max-width:760px){.hero-actions>button{margin-bottom:0}.hero-actions{align-items:flex-start}.hero-actions label,.hero-actions>button{min-width:calc(50% - 6px)}.hero-actions select,.hero-actions input{width:100%}}
 @media(max-width:760px){.hero-actions .interview-schedule-control{width:100%;grid-template-columns:1fr 100px}.hero-actions .interview-schedule-control label{min-width:0}.interview-schedule-control .schedule-save{grid-column:1/-1;width:100%}}
+.email-chat-history{display:flex;flex-direction:column;gap:12px;margin:10px 0}.email-chat-msg{border-radius:9px;overflow:hidden}.email-chat-msg.assistant{background:#f8f9fb;border:1px solid #e8eaf0}.email-chat-msg.user{background:#f0edff;border:1px solid #d8d1ff;padding:10px 14px;font-size:13px}.email-chat-msg pre{white-space:pre-wrap;font:inherit;line-height:1.7;padding:12px 14px;margin:0;color:#4f586b}.email-chat-actions{display:flex;justify-content:flex-end;padding:6px 10px 0}.email-chat-input{display:flex;gap:8px;margin-top:10px;align-items:flex-end}.email-chat-input textarea{flex:1;border:1px solid #dfe2e9;border-radius:8px;padding:8px;font:inherit;resize:none}
