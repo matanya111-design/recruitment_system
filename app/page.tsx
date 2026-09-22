@@ -2965,6 +2965,16 @@ function AiActivityPage({ rows: rawRows }: { rows: AiActivity[] }) {
   const rows = rawRows.filter(r => r.inputTokens > 0 || r.outputTokens > 0 || (r.actionType ?? "").trim() !== "");
   const total = rows.reduce((sum, row) => sum + row.estimatedCostUsd, 0);
   const tokens = rows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0);
+  const [sortKey, setSortKey] = useState<"createdAt"|"actionType"|"model"|"inputTokens"|"outputTokens"|"estimatedCostUsd">("createdAt");
+  const [sortDir, setSortDir] = useState<1|-1>(-1);
+  function toggleSort(k: typeof sortKey) { if (sortKey===k) setSortDir(d=>d===1?-1:1); else { setSortKey(k); setSortDir(-1); } }
+  const SH = ({k,children}:{k:typeof sortKey;children:React.ReactNode}) => (
+    <button className="sort-head" onClick={()=>toggleSort(k)}>{children}{sortKey===k?(sortDir===1?" ↑":" ↓"):""}</button>
+  );
+  const sorted = [...rows].sort((a,b)=>{
+    const av=a[sortKey], bv=b[sortKey];
+    return (typeof av==="number" ? av-Number(bv) : String(av||"").localeCompare(String(bv||""),"he")) * sortDir;
+  });
   return (
     <>
       <Heading title="פעילות AI ועלויות" subtitle="יומן הפעולות שבוצעו מתוך המערכת והעלות המשוערת שלהן." />
@@ -2976,8 +2986,16 @@ function AiActivityPage({ rows: rawRows }: { rows: AiActivity[] }) {
       <section className="panel table-panel">
         <div className="panel-head padded"><div><h2>יומן פעולות</h2><p>החיוב הרשמי מופיע בחשבון OpenAI. הסכומים כאן הם אומדן.</p></div></div>
         <div className="table-wrap">
-          <table><thead><tr><th>תאריך</th><th>פעולה</th><th>פריט</th><th>מודל</th><th>טוקנים בקלט</th><th>טוקנים בפלט</th><th>עלות משוערת</th></tr></thead>
-            <tbody>{rows.map((row) => <tr key={row.id} className="static-row"><td>{formatDate(row.createdAt)}</td><td><b>{row.actionType}</b></td><td>{row.subjectLabel}</td><td>{row.model}</td><td>{row.inputTokens.toLocaleString("he-IL")}{row.cachedInputTokens > 0 && <small className="cell-sub">מתוכם {row.cachedInputTokens.toLocaleString("he-IL")} מהמטמון</small>}</td><td>{row.outputTokens.toLocaleString("he-IL")}</td><td>${row.estimatedCostUsd.toFixed(5)}</td></tr>)}</tbody>
+          <table><thead><tr>
+            <th><SH k="createdAt">תאריך</SH></th>
+            <th><SH k="actionType">פעולה</SH></th>
+            <th>פריט</th>
+            <th><SH k="model">מודל</SH></th>
+            <th><SH k="inputTokens">טוקנים בקלט</SH></th>
+            <th><SH k="outputTokens">טוקנים בפלט</SH></th>
+            <th><SH k="estimatedCostUsd">עלות משוערת</SH></th>
+          </tr></thead>
+            <tbody>{sorted.map((row) => <tr key={row.id} className="static-row"><td>{formatDate(row.createdAt)}</td><td><b>{row.actionType}</b></td><td>{row.subjectLabel}</td><td>{row.model}</td><td>{row.inputTokens.toLocaleString("he-IL")}{row.cachedInputTokens > 0 && <small className="cell-sub">מתוכם {row.cachedInputTokens.toLocaleString("he-IL")} מהמטמון</small>}</td><td>{row.outputTokens.toLocaleString("he-IL")}</td><td>${row.estimatedCostUsd.toFixed(5)}</td></tr>)}</tbody>
           </table>
         </div>
         {!rows.length && <div className="empty-panel"><span>✦</span><h2>עדיין לא נרשמו פעולות AI</h2><p>פעולות חדשות של יצירת משרה והערכת מועמד יופיעו כאן. פעולות שבוצעו לפני הוספת היומן אינן ניתנות לשחזור.</p></div>}
