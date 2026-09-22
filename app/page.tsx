@@ -832,10 +832,12 @@ function Jobs({
   addJob: () => void;
 }) {
   const [q, setQ] = useState("");
-  const rows = jobs.filter(
-    (j) =>
-      j.title.toLowerCase().includes(q.toLowerCase()) || j.client.includes(q),
-  );
+  const [sortField, setSortField] = useState<"title"|"client"|"status"|"candidates"|"highFit"|"created"|"updated">("updated");
+  const [sortDir, setSortDir] = useState<1|-1>(-1);
+  function toggleSort(f: typeof sortField) { if (sortField===f) setSortDir(d=>d===1?-1:1); else { setSortField(f); setSortDir(1); } }
+  const SH = ({f,children}:{f:typeof sortField;children:React.ReactNode}) => <button className="sort-head" onClick={()=>toggleSort(f)}>{children}{sortField===f?(sortDir===1?" ↑":" ↓"):""}</button>;
+  const rows = jobs.filter((j) => j.title.toLowerCase().includes(q.toLowerCase()) || j.client.includes(q))
+    .sort((a,b)=>{ const av=a[sortField],bv=b[sortField]; return (typeof av==="number"?av-Number(bv):String(av||"").localeCompare(String(bv||""),"he",{numeric:true}))*sortDir; });
   return (
     <>
       <Heading
@@ -862,14 +864,14 @@ function Jobs({
           <table>
             <thead>
               <tr>
-                <th>משרה</th>
-                <th>לקוח</th>
-                <th>סטטוס</th>
-                <th>מועמדים</th>
-                <th>התאמה גבוהה</th>
+                <th><SH f="title">משרה</SH></th>
+                <th><SH f="client">לקוח</SH></th>
+                <th><SH f="status">סטטוס</SH></th>
+                <th><SH f="candidates">מועמדים</SH></th>
+                <th><SH f="highFit">התאמה גבוהה</SH></th>
                 <th>התאמה סבירה</th>
-                <th>תאריך יצירה</th>
-                <th>עדכון</th>
+                <th><SH f="created">תאריך יצירה</SH></th>
+                <th><SH f="updated">עדכון</SH></th>
                 <th />
               </tr>
             </thead>
@@ -2859,6 +2861,15 @@ function UserManagementPage({
           <button className="primary" disabled={Boolean(busy)}>{busy ? "שומר..." : "הוספה / עדכון"}</button>
         </form>
         {message && <div className={`cv-message ${message.includes("נכשלה") ? "error" : "success"}`}>{message}</div>}
+        {rows.filter(r=>r.email!==ownerEmail).length > 0 && (
+          <div style={{padding:"0 18px 12px",display:"flex",justifyContent:"flex-end"}}>
+            <button className="danger-text-button" style={{fontSize:12}} disabled={Boolean(busy)} onClick={async()=>{
+              if (!confirm(`להסיר ${rows.filter(r=>r.email!==ownerEmail).length} משתמשים? (${ownerEmail} יישאר)`)) return;
+              for (const row of rows.filter(r=>r.email!==ownerEmail)) { setBusy(row.email); try { await remove(row.email); } catch{} }
+              setBusy(""); setMessage("כל המשתמשים הוסרו חוץ ממך.");
+            }}>הסרת כולם חוץ ממני</button>
+          </div>
+        )}
         <div className="user-list">
           {rows.map((row) => {
             const isOwner = row.email === ownerEmail;
@@ -2945,7 +2956,8 @@ function AiInstructionsPage({
   );
 }
 
-function AiActivityPage({ rows }: { rows: AiActivity[] }) {
+function AiActivityPage({ rows: rawRows }: { rows: AiActivity[] }) {
+  const rows = rawRows.filter(r => r.inputTokens > 0 || r.outputTokens > 0 || r.actionType.trim() !== "");
   const total = rows.reduce((sum, row) => sum + row.estimatedCostUsd, 0);
   const tokens = rows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0);
   return (
@@ -3026,14 +3038,14 @@ function ArchivePage({
 
 function UsageGuide({ setView }: { setView: (v: View) => void }) {
   const steps = [
-    ["1", "יוצרים משרה", "מדביקים מלל חופשי ממייל או מדרישות הלקוח. ה-AI מציע טיוטה מובנית, ואתה בודק, מתקן ושומר."],
-    ["2", "מוסיפים מועמד", "יוצרים מועמד ומשייכים אותו למשרה. אותו אדם יכול להיות משויך למספר משרות, ולכל מועמדות נשמרים בנפרד סטטוס, ראיון והערכת AI."],
-    ["3", "בונים את תיק המועמד", "מעלים PDF, בוחרים חילוץ מהיר או חילוץ חכם, בודקים ומתקנים את הפרטים. באותו מסך אפשר לשמור גם את חוות דעת המגייס מהראיון הראשוני."],
-    ["4", "מפיקים הערכה ראשונית", "ה-AI משווה בין דרישות המשרה, קורות החיים וחוות דעת המגייס אם הוזנה, ומחזיר ציון, חוזקות, פערים ושאלות לבירור."],
-    ["5", "מתעדים ראיון מקצועי", "אפשר לכתוב סיכום ידנית או להדביק תמלול והערות. ה-AI יוצר טיוטה, אתה עורך ומאשר, ורק אז היא עוברת לסיכום הראיון."],
-    ["6", "מפיקים הערכה סופית", "לוחצים על הערכה מחדש. הפעם הניתוח כולל גם את סיכום הראיון ונשמר רק במועמדות הנוכחית."],
-    ["7", "מגדירים המשך טיפול", "הסטטוס מתקדם אוטומטית בהעלאת קורות חיים, בקביעת ראיון ובשמירת סיכום. החלטות כמו עבר, נדחה והועבר ללקוח נשארות ידניות. תמיד ניתן לשנות ידנית, עם אזהרה במקרה של סתירה."],
-    ["8", "עוקבים אחרי שימוש ב-AI", "במסך פעילות AI ועלויות רואים פעולות חדשות, טוקנים ועלות משוערת. החיוב הרשמי נשאר בחשבון OpenAI."],
+    ["1", "יוצרים משרה", "מדביקים מלל חופשי ממייל, תמלול שיחה או דרישות הלקוח. ה-AI מציע טיוטה מובנית — שם, לקוח, חובה, יתרון, דגשים מקצועיים ואישיותיים. אתה בודק, מתקן ושומר."],
+    ["2", "מוסיפים מועמד", "יוצרים מועמד ומשייכים אותו למשרה. אותו אדם יכול להיות משויך למספר משרות — לכל מועמדות נשמרים בנפרד סטטוס, ראיון, והערכת AI. אפשר לשייך למשרה נוספת מתוך דף המועמד."],
+    ["3", "בונים את תיק המועמד", "מעלים PDF (עד 10MB) — חילוץ מהיר או חילוץ AI. מאמתים ומתקנים פרטים לפני שמירה. שומרים גם חוות דעת המגייס מהראיון הראשוני — היא משמשת מקור משני בהערכות."],
+    ["4", "הערכה לפני ראיון", "לשונית ״הערכה לפני ראיון״ — AI משווה בין דרישות המשרה, קורות החיים וחוות דעת המגייס, ומחזיר ציון, חוזקות, פערים, שאלות לראיון ומייל גיוס. ניתן להמשיך שיח עם ה-AI לשיפור המייל."],
+    ["5", "מתעדים ראיון מקצועי", "לשונית ״סיכום ראיון״ — הדבקת תמלול Teams/הערות או העלאת קובץ טקסט. ה-AI יוצר טיוטה, אתה עורך ומאשר. רק לאחר אישור הסיכום עובר ללשונית ״הערכה לאחר ראיון״."],
+    ["6", "הערכה לאחר ראיון", "לשונית ״הערכה לאחר ראיון״ — ניתוח מלא הכולל גם את סיכום הראיון. ההחלטה היא להעביר ללקוח או לא. מייל גיוס נפרד עם שורה תחתונה חד-משמעית."],
+    ["7", "ניהול סטטוס ומשימות", "הסטטוס מתקדם אוטומטית בצמתים מרכזיים. ניתן לשנות ידנית — כולל ״הפסיק תהליך״ עם הסבר. הפעולה הבאה מופיעה גם בלוח הבקרה."],
+    ["8", "ניהול צוות ושאילתות AI", "לשונית ״ניהול צוות״ — ישות לכל עובד עם סיכום שיחה, action items ומשרות מתאימות. לשונית ״שאילתות AI כלליות״ — שאל כל שאלה על המערכת."],
   ];
   return (
     <>
@@ -3176,7 +3188,8 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
     await fetch("/api/team", { method:"DELETE", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id}) });
     await fetchMembers();
   }
-  async function findMatches(memberId:number) {
+  async function findMatches(memberId:number, force=false) {
+    if (!force && matchResult[memberId]) return; // already loaded
     setSearching(memberId);
     try {
       const r = await fetch("/api/ai-general", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ teamMemberId: memberId, jobsCount: jobs.length }) });
@@ -3184,6 +3197,12 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
       setMatchResult(prev => ({...prev, [memberId]: d.reply || ""}));
     } finally { setSearching(null); }
   }
+  // Auto-load matches when members are first fetched and jobs are available
+  useEffect(() => {
+    if (members.length > 0 && jobs.length > 0) {
+      members.forEach(m => findMatches(m.id));
+    }
+  }, [members.length, jobs.length]);
   if (loading && !loaded) return <div className="loading">טוען...</div>;
   return (
     <>
@@ -3221,7 +3240,7 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
           {m.notes && <p style={{whiteSpace:"pre-wrap",color:"#4f5870",marginBottom:8}}>{m.notes}</p>}
           {m.actions?.length>0 && <div style={{marginBottom:8}}><b style={{fontSize:12}}>Action Items:</b>{m.actions.map((a,i)=><div key={i} style={{fontSize:12,padding:"2px 0",color:"var(--muted)"}}>{i+1}. {a}</div>)}</div>}
           {m.targetJobIds?.length>0 && <div style={{marginBottom:8,fontSize:12}}><b>משרות מסומנות: </b>{m.targetJobIds.map(id=>{const j=jobs.find(x=>x.id===id);return j?<span key={id} className="tags" style={{marginLeft:6}}><span>{j.title} · {j.client}</span></span>:null})}</div>}
-          <button className="ai-button" style={{fontSize:12}} disabled={searching===m.id} onClick={()=>findMatches(m.id)}>{searching===m.id?"מחפש...":"✦ חפש משרות מתאימות ב-AI"}</button>
+          <button className="secondary" style={{fontSize:11}} disabled={searching===m.id} onClick={()=>findMatches(m.id,true)}>{searching===m.id?"מחפש...":"↺ רענון המלצות"}</button>
           {matchResult[m.id] && <div style={{marginTop:8,background:"#f8f9fb",borderRadius:8,padding:12,whiteSpace:"pre-wrap",fontSize:13,lineHeight:1.7}}>{matchResult[m.id]}</div>}
         </section>
       ))}
