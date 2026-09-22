@@ -11,10 +11,15 @@ async function ensureTable() {
       notes TEXT NOT NULL DEFAULT '',
       target_job_ids JSONB NOT NULL DEFAULT '[]',
       actions JSONB NOT NULL DEFAULT '[]',
+      ai_insight JSONB,
+      ai_insight_updated_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // Add columns to existing tables if missing
+  await db.execute(sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS ai_insight JSONB`);
+  await db.execute(sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS ai_insight_updated_at TIMESTAMPTZ`);
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS team_meetings (
       id BIGSERIAL PRIMARY KEY,
@@ -33,13 +38,15 @@ export async function GET() {
   if (identity instanceof Response) return identity;
   await ensureTable();
   const db = getDb();
-  const rows = await db.execute(sql`SELECT id, name, notes, target_job_ids, actions, created_at FROM team_members ORDER BY name`);
+  const rows = await db.execute(sql`SELECT id, name, notes, target_job_ids, actions, ai_insight, ai_insight_updated_at, created_at FROM team_members ORDER BY name`);
   const members = (rows as unknown as { rows: Record<string, unknown>[] }).rows.map(r => ({
     id: r.id,
     name: r.name,
     notes: r.notes,
     targetJobIds: r.target_job_ids as number[],
     actions: r.actions as string[],
+    aiInsight: r.ai_insight ?? null,
+    aiInsightUpdatedAt: r.ai_insight_updated_at ?? null,
     createdAt: r.created_at,
   }));
   return Response.json({ members });
@@ -63,13 +70,18 @@ export async function PATCH(request: Request) {
   const identity = await requireAppIdentity();
   if (identity instanceof Response) return identity;
   await ensureTable();
-  const body = (await request.json()) as { id: number; name: string; notes: string; targetJobIds: number[]; actions: string[] };
+  const body = (await request.json()) as { id: number; name?: string; notes?: string; targetJobIds?: number[]; actions?: string[]; aiInsight?: unknown };
   if (!body.id) return Response.json({ error: "חסר id" }, { status: 400 });
   const db = getDb();
-  await db.execute(sql`
-    UPDATE team_members SET name=${body.name}, notes=${body.notes ?? ""}, target_job_ids=${JSON.stringify(body.targetJobIds ?? [])}, actions=${JSON.stringify(body.actions ?? [])}, updated_at=NOW()
-    WHERE id=${body.id}
-  `);
+  if (body.aiInsight !== undefined) {
+    // Dedicated insight save — only update ai_insight fields
+    await db.execute(sql`UPDATE team_members SET ai_insight=${JSON.stringify(body.aiInsight)}, ai_insight_updated_at=NOW() WHERE id=${body.id}`);
+  } else {
+    await db.execute(sql`
+      UPDATE team_members SET name=${body.name ?? ""}, notes=${body.notes ?? ""}, target_job_ids=${JSON.stringify(body.targetJobIds ?? [])}, actions=${JSON.stringify(body.actions ?? [])}, updated_at=NOW()
+      WHERE id=${body.id}
+    `);
+  }
   return Response.json({ ok: true });
 }
 

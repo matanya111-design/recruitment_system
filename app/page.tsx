@@ -3189,7 +3189,8 @@ function GeneralAiPage({ jobs, candidates }: { jobs: Job[]; candidates: Candidat
   );
 }
 
-type TeamMember = {id:number;name:string;notes:string;targetJobIds:number[];actions:string[];createdAt:string};
+type TeamAiInsight = {matches:Array<{job_title:string;client:string;fit_score:number;reason:string}>;analysis:string;strengths:string[];gaps:string[];growth_recommendation:string;next_steps:string[]} | null;
+type TeamMember = {id:number;name:string;notes:string;targetJobIds:number[];actions:string[];aiInsight:TeamAiInsight;aiInsightUpdatedAt:string|null;createdAt:string};
 type TeamMeeting = {id:number;memberId:number;meetingDate:string;summary:string;actionItems:string[];createdAt:string};
 
 function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
@@ -3202,25 +3203,30 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
   const [transcript, setTranscript] = useState(""), [meetingDate, setMeetingDate] = useState(() => new Date().toISOString().slice(0,16));
   const [draft, setDraft] = useState<{summary:string;action_items:string[];insights:string}|null>(null);
   const [summarizing, setSummarizing] = useState(false), [saving, setSaving] = useState(false);
-  const [matchResult, setMatchResult] = useState<{matches:Array<{job_title:string;client:string;fit_score:number;reason:string}>;analysis:string}|null>(null);
+  // Load saved insight from member prop on mount
+  const savedInsight = member.aiInsight as (TeamAiInsight & {matches?:Array<{job_title:string;client:string;fit_score:number;reason:string}>;analysis?:string}) | null;
+  const [matchResult, setMatchResult] = useState<{matches:Array<{job_title:string;client:string;fit_score:number;reason:string}>;analysis:string}|null>(
+    savedInsight?.matches ? {matches:savedInsight.matches, analysis:savedInsight.analysis??""} : null
+  );
   const [matching, setMatching] = useState(false);
-  const [analysis, setAnalysis] = useState<{strengths:string[];gaps:string[];growth_recommendation:string;next_steps:string[]}|null>(null);
+  const [analysis, setAnalysis] = useState<{strengths:string[];gaps:string[];growth_recommendation:string;next_steps:string[]}|null>(
+    savedInsight?.strengths ? {strengths:savedInsight.strengths,gaps:savedInsight.gaps??[],growth_recommendation:savedInsight.growth_recommendation??"",next_steps:savedInsight.next_steps??[]} : null
+  );
   const [analyzing, setAnalyzing] = useState(false);
   const [aiRunning, setAiRunning] = useState(false);
   const [err, setErr] = useState("");
 
-  // Load meetings only when first entering timeline or meeting tab
+  // Always reload when entering timeline so saves are reflected immediately
   useEffect(() => {
-    if ((tab === "timeline" || tab === "meeting") && !meetingsLoaded) loadMeetings();
+    if (tab === "timeline") loadMeetings();
   }, [tab]);
 
   async function loadMeetings() {
+    setMeetingsLoaded(false);
     try {
       const r = await fetch(`/api/team/meetings?memberId=${member.id}`);
-      if (!r.ok) { setMeetingsLoaded(true); return; }
-      const d = await r.json();
-      setMeetings(d.meetings || []);
-    } catch { /* table may not exist yet, ignore */ }
+      if (r.ok) { const d = await r.json(); setMeetings(d.meetings || []); }
+    } catch { /* table may not exist yet */ }
     setMeetingsLoaded(true);
   }
   async function summarizeTranscript() {
@@ -3239,7 +3245,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
     try {
       const r = await fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"save",memberId:member.id,transcript,summary:draft.summary,actionItems:draft.action_items,meetingDate}) });
       if (!r.ok) throw new Error("שמירה נכשלה");
-      setTranscript(""); setDraft(null); setMeetingsLoaded(false); setTab("timeline"); loadMeetings(); onRefresh();
+      setTranscript(""); setDraft(null); setTab("timeline"); onRefresh();
     } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
     finally { setSaving(false); }
   }
@@ -3258,8 +3264,14 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
         fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"match-jobs",memberId:member.id,memberName:member.name,memberNotes:context,jobs:jobs.map(j=>({id:j.id,title:j.title,client:j.client,technologies:j.tech}))}) }),
         fetch("/api/team/meetings", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"analyze",memberId:member.id,memberName:member.name,memberNotes:context}) }),
       ]);
-      if (matchRes.ok) { const d = await matchRes.json(); setMatchResult(d.result); }
-      if (analyzeRes.ok) { const d = await analyzeRes.json(); setAnalysis(d.analysis); }
+      let newMatch = matchResult, newAnalysis = analysis;
+      if (matchRes.ok) { const d = await matchRes.json(); newMatch = d.result; setMatchResult(d.result); }
+      if (analyzeRes.ok) { const d = await analyzeRes.json(); newAnalysis = d.analysis; setAnalysis(d.analysis); }
+      // Persist insight to DB so it survives navigation
+      if (newMatch || newAnalysis) {
+        await fetch("/api/team", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ id:member.id, aiInsight:{...newMatch??{}, ...newAnalysis??{}} }) });
+        onRefresh();
+      }
     } catch(e) { setErr(e instanceof Error ? e.message : "שגיאה"); }
     finally { setMatching(false); setAnalyzing(false); setAiRunning(false); }
   }
@@ -3358,7 +3370,8 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
           )}
           {(matchResult || analysis) && (
             <div>
-              <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                {member.aiInsightUpdatedAt && <small style={{color:"var(--muted)"}}>עודכן: {formatDate(member.aiInsightUpdatedAt)}</small>}
                 <button className="secondary" style={{fontSize:11}} disabled={aiRunning} onClick={()=>{setMatchResult(null);setAnalysis(null);runInsight();}}>{aiRunning?"מרענן...":"↺ רענון"}</button>
               </div>
               {matchResult && (
