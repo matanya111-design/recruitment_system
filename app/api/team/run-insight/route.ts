@@ -64,8 +64,10 @@ export async function POST(request: Request) {
   const context = `${member.notes || ""}\n\nסיכומי פגישות:\n${allSummaries || "אין עדיין"}`.trim();
   const jobsList = jobs.map(j => `- ${j.title} ב-${j.client}`).join("\n");
 
-  // Run both AI operations in parallel on the server
-  const [matchResult, analyzeResult] = await Promise.all([
+  // Run both AI operations in parallel — wrapped so errors return JSON not empty response
+  let matchResult, analyzeResult;
+  try {
+  [matchResult, analyzeResult] = await Promise.all([
     generateStructured<{ matches: Array<{job_title:string;client:string;fit_score:number;reason:string}>; analysis: string }>({
       operation: "team_job_match",
       instructions: `אתה מסייע לחיפוש משרות מתאימות לעובד בחברה, על סמך פרופיל ופגישות 1:1. העבר עד 3 משרות המתאימות ביותר עם ציון התאמה (0-100) והסבר קצר. ב-analysis כתוב תובנה על הפרופיל המקצועי ביחס למשרות. אם אין התאמה טובה — אמור זאת ישירות.`,
@@ -114,4 +116,8 @@ export async function POST(request: Request) {
   });
 
   return Response.json({ insight });
+  } catch(err) {
+    console.error("run-insight error:", err);
+    return Response.json({ error: err instanceof Error ? err.message : "שגיאה בניתוח AI" }, { status: 500 });
+  }
 }
