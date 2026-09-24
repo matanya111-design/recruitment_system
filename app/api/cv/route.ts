@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 const TECH_TERMS = ["Python","PySpark","Spark","SQL","Kafka","Flink","Airflow","Prefect","Databricks","Snowflake","Hadoop","Hive","Impala","HBase","Trino","NiFi","Elasticsearch","OpenSearch","Linux","Ansible","Terraform","Docker","Kubernetes","OpenShift","Helm","Argo CD","Jenkins","GitHub Actions","GitLab CI","AWS","Azure","GCP","S3","Glue","Athena","Lambda","EKS","ECS","EC2","RDS","PostgreSQL","MySQL","MongoDB","Redis","Cassandra","Java","C++","C#","Scala","Go","FastAPI","Flask","Django","MLflow","vLLM","Grafana","Prometheus","Splunk","CI/CD","ETL","ELT"];
 const PROFESSIONAL_TITLE_PATTERN = /\b(?:senior\s+|lead\s+|principal\s+|head\s+of\s+|team\s+lead\s+)?(?:data\s+engineer|data\s+architect|data\s+platform(?:s)?\s+(?:engineer|administrator|lead)|devops\s+engineer|cloud\s+engineer|platform\s+engineer|machine\s+learning\s+engineer|ml\s+engineer|mlops\s+engineer|software\s+engineer|backend\s+developer|data\s+analyst|bi\s+developer)\b/i;
@@ -61,12 +62,15 @@ export async function POST(request: Request) {
     if (!(file instanceof File) || !candidateId)
       return Response.json({ error: "חסר קובץ או מזהה מועמד" }, { status: 400 });
     if (file.size > MAX_FILE_SIZE)
-      return Response.json({ error: "ניתן להעלות PDF עד 10MB" }, { status: 400 });
+      return Response.json({ error: "ניתן להעלות קובץ עד 10MB" }, { status: 400 });
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const sig = bytes.slice(0, 5).toString("ascii");
-    if (file.type !== "application/pdf" || sig !== "%PDF-")
-      return Response.json({ error: "יש להעלות קובץ PDF תקין בלבד" }, { status: 400 });
+    const isPdf = file.type === "application/pdf" && sig === "%PDF-";
+    // .docx is a zip archive (signature "PK"); legacy binary .doc is rejected — mammoth can't parse it.
+    const isDocx = (file.type === DOCX_MIME || file.name.toLowerCase().endsWith(".docx")) && bytes[0] === 0x50 && bytes[1] === 0x4b;
+    if (!isPdf && !isDocx)
+      return Response.json({ error: "יש להעלות קובץ PDF או Word (.docx) תקין בלבד" }, { status: 400 });
 
     const db = getDb();
     const [cand] = await db.select({ id: candidates.id, cvKey: candidates.cvKey })
@@ -77,24 +81,33 @@ export async function POST(request: Request) {
     let pages: number | null = null;
     let extractionStatus = "הטקסט חולץ";
     try {
-      const { extractText, getDocumentProxy } = await import("unpdf");
-      const pdf = await getDocumentProxy(new Uint8Array(bytes));
-      const result = await extractText(pdf, { mergePages: true });
-      pages = result.totalPages;
-      extractedText = String(result.text ?? "").slice(0, 200000).trim();
-      if (!extractedText) extractionStatus = "לא נמצא טקסט - ייתכן שזה PDF סרוק";
+      if (isPdf) {
+        const { extractText, getDocumentProxy } = await import("unpdf");
+        const pdf = await getDocumentProxy(new Uint8Array(bytes));
+        const result = await extractText(pdf, { mergePages: true });
+        pages = result.totalPages;
+        extractedText = String(result.text ?? "").slice(0, 200000).trim();
+        if (!extractedText) extractionStatus = "לא נמצא טקסט - ייתכן שזה PDF סרוק";
+      } else {
+        const mammoth = (await import("mammoth")).default;
+        const result = await mammoth.extractRawText({ buffer: bytes });
+        extractedText = String(result.value ?? "").slice(0, 200000).trim();
+        if (!extractedText) extractionStatus = "לא נמצא טקסט בקובץ ה-Word";
+      }
     } catch {
       extractionStatus = "הקובץ נשמר, חילוץ הטקסט נכשל";
     }
 
-    const safeName = file.name.replace(/[^a-zA-Z0-9._\-\u0590-\u05ff]/g, "_").slice(0, 120) || "resume.pdf";
+    const contentType = isPdf ? "application/pdf" : DOCX_MIME;
+    const defaultName = isPdf ? "resume.pdf" : "resume.docx";
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || defaultName;
     const key = `candidate-cvs/${candidateId}/${randomUUID()}-${safeName}`;
-    await uploadObject(key, bytes, "application/pdf");
+    await uploadObject(key, bytes, contentType);
 
     const oldKey = cand.cvKey;
     await db.update(candidates).set({
       cvKey: key, cvFilename: file.name.slice(0, 180),
-      cvContentType: "application/pdf",
+      cvContentType: contentType,
       cvExtractedText: extractedText, cvExtractionStatus: extractionStatus,
       cvUploadedAt: new Date(), updatedAt: new Date(),
     }).where(eq(candidates.id, candidateId));

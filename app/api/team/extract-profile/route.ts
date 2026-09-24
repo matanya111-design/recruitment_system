@@ -1,5 +1,5 @@
 import { requireAppIdentity } from "@/lib/auth/identity";
-import { generateStructured, estimateCost } from "@/lib/ai/provider";
+import { generateStructured, estimateCost, isAiConfigured } from "@/lib/ai/provider";
 import { getDb } from "@/db/client";
 import { aiActivityLogs, aiInstructions } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const identity = await requireAppIdentity();
   if (identity instanceof Response) return identity;
 
-  if (!process.env.OPENAI_API_KEY)
+  if (!isAiConfigured())
     return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
   const { text, nameHint } = (await request.json()) as { text: string; nameHint?: string };

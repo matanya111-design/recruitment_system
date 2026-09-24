@@ -1,7 +1,8 @@
 ﻿"use client";
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
 
-import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { Fragment, useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { instructionDefinitions } from "@/lib/ai/instructions";
 
 // Module-level background jobs tracker — survives component unmount
 const bgJobs: Map<string, { label: string; status: "running"|"done"|"error"; result?: unknown; error?: string }> = new Map();
@@ -26,7 +27,7 @@ async function runBgJob(key: string, label: string, fn: () => Promise<unknown>) 
 }
 
 type View = "dashboard" | "jobs" | "job" | "candidates" | "candidate" | "archive" | "guide" | "ai-activity" | "ai-instructions" | "users" | "team" | "general-ai";
-type AiInstruction = { key: string; title: string; description: string; content: string; isCustom: boolean; updatedAt: string };
+type AiInstruction = { key: string; title: string; description: string; content: string; isCustom: boolean; updatedAt: string; trigger: string; group: string };
 type CurrentUser = { email: string; name: string; isAuthenticated: boolean; isAllowed: boolean; isAdmin: boolean };
 type AppUser = { email: string; role: "admin" | "user"; createdAt: string; updatedAt: string };
 type AiActivity = {
@@ -55,37 +56,36 @@ type Job = {
   created: string;
   updated: string;
 };
-type EvaluationResult = {
-  gate_status: string;
+// Post-interview evaluation — binary client-facing decision, no gate/questions/CV-change list.
+type PostEvaluationResult = {
+  decision: string;
   score: number;
-  fit_label: string;
-  recommendation: string;
   bottom_line: string;
   executive_summary: string;
-  strengths: { requirement: string; evidence: string; assessment: string }[];
+  strengths: { requirement: string; evidence: string }[];
   gaps: {
-    requirement: string;
-    candidate_has: string;
-    missing: string;
+    gap: string;
     criticality: string;
     completion_likelihood: string;
   }[];
   uncertainties: string[];
-  questions: {
-    question: string;
-    why: string;
-    good_answer: string;
-    red_flag: string;
-    interviewer_explanation: string;
-  }[];
-  technology_fit: string;
-  experience_fit: string;
-  risks: string[];
   cv_changes_needed: boolean;
-  cv_change_recommendations: { location: string; change: string; reason: string; evidence: string }[];
   generalizable_feedback: boolean;
   proposed_engine_rule: string;
   recruitment_email: string;
+};
+// Pre-interview evaluation — categorical go/no-go decision, no numeric score from the AI.
+type FitTableRow = { requirement: string; evidence: string; fit_level: string; materiality: string; completable_by_naya: string };
+type InterviewQuestion = { question: string; targets: string; what_to_verify: string };
+type PreEvaluationResult = {
+  core_role: string;
+  fit_table: FitTableRow[];
+  decision: string;
+  decision_reason: string;
+  recruitment_email: string;
+  generalizable_feedback: boolean;
+  proposed_engine_rule: string;
+  interview_questions?: InterviewQuestion[];
 };
 type Candidate = {
   id: number;
@@ -108,13 +108,19 @@ type Candidate = {
   recommendation: string;
   interview: string;
   interviewSummary: string;
+  interviewRawMaterial: string;
   nextAction: string;
   nextActionDate: string;
   evaluationType: string;
   evaluationDate: string;
-  evaluation: EvaluationResult | null;
+  evaluation: PreEvaluationResult | PostEvaluationResult | null;
+  preEvaluation: PreEvaluationResult | null;
+  preEvaluationDate: string;
+  postEvaluation: PostEvaluationResult | null;
+  postEvaluationDate: string;
   evaluationFeedback: string;
   proposedEngineRule: string;
+  proposedEngineRuleKey: string;
   engineRuleStatus: string;
   cvFilename: string;
   cvSize: number;
@@ -146,9 +152,12 @@ const parseJson = (value: unknown): string[] => {
     return [];
   }
 };
-const parseEvaluation = (value: unknown): EvaluationResult | null => {
+const parseEvaluation = (value: unknown): PreEvaluationResult | PostEvaluationResult | null => {
+  if (!value) return null;
+  // jsonb columns come back from pg already parsed as objects — only strings need JSON.parse.
+  if (typeof value === "object") return value as PreEvaluationResult | PostEvaluationResult;
   try {
-    return value ? JSON.parse(String(value)) : null;
+    return JSON.parse(String(value));
   } catch {
     return null;
   }
@@ -171,14 +180,35 @@ const formatBytes = (value: number) =>
   value >= 1024 * 1024
     ? `${(value / 1024 / 1024).toFixed(1)} MB`
     : `${Math.max(1, Math.round(value / 1024))} KB`;
-const statusClass = (v: string) =>
-  v.includes("נדחה") || v.includes("לא מתאים")
+// The AI writes must/preferred/emphasis fields as one string with " - " between clauses (its natural
+// writing style, not a real delimiter contract) — split on that for a readable bullet list, falling
+// back to a plain paragraph when there's nothing to split.
+function TextBullets({ text }: { text: string }) {
+  const parts = text.split(/\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length <= 1) return <p>{text}</p>;
+  return (
+    <ul className="bullet-list">
+      {parts.map((p, i) => (
+        <li key={i}>{p}</li>
+      ))}
+    </ul>
+  );
+}
+function fitLevelColor(level: string): string {
+  if (level === "מוכחת") return "var(--green)";
+  if (level === "חלקית") return "var(--orange)";
+  return "#c04f4f"; // "לא הוכחה" / "פער ברור"
+}
+const statusClass = (v: string) => {
+  v = v || "";
+  return v.includes("נדחה") || v.includes("לא מתאים") || v.includes("לא לקדם") || v.includes("לא להעביר")
     ? "danger"
     : v.includes("בירור") || v.includes("חלקית")
       ? "warning"
       : v.includes("חדש") || v.includes("בדיקה") || v.includes("טרם")
         ? "neutral"
         : "success";
+};
 
 function AccessScreen({ title, text, action, href }: { title: string; text?: string; action?: string; href?: string }) {
   return <main className="access-screen" dir="rtl"><section className="panel access-card"><div className="access-logo">N</div><h1>{title}</h1>{text && <p>{text}</p>}{action && href && <a className="primary" href={href}>{action}</a>}</section></main>;
@@ -294,13 +324,19 @@ export default function Home() {
           recommendation: c.recommendation,
           interview: c.interview_date || "",
           interviewSummary: c.interview_summary || "",
+          interviewRawMaterial: c.interview_raw_material || "",
           nextAction: c.next_action || "",
           nextActionDate: c.next_action_date || "",
           evaluationType: c.evaluation_type || "ראשונית",
           evaluationDate: c.evaluation_date || "",
           evaluation: parseEvaluation(c.evaluation_json),
+          preEvaluation: parseEvaluation(c.pre_evaluation_json) as PreEvaluationResult | null,
+          preEvaluationDate: c.pre_evaluation_date || "",
+          postEvaluation: parseEvaluation(c.post_evaluation_json) as PostEvaluationResult | null,
+          postEvaluationDate: c.post_evaluation_date || "",
           evaluationFeedback: c.evaluation_feedback || "",
           proposedEngineRule: c.proposed_engine_rule || "",
+          proposedEngineRuleKey: c.proposed_engine_rule_key || "",
           engineRuleStatus: c.engine_rule_status || "ללא הצעה",
           cvFilename: c.cv_filename || "",
           cvSize: Number(c.cv_size || 0),
@@ -340,7 +376,7 @@ export default function Home() {
       })));
       setAiInstructions((d.aiInstructions || []).map((x: any) => ({
         key: x.key, title: x.title, description: x.description, content: x.content,
-        isCustom: Boolean(x.is_custom), updatedAt: x.updated_at,
+        isCustom: Boolean(x.is_custom), updatedAt: x.updated_at, trigger: x.trigger || "", group: x.group || "",
       })));
       setAppUsers((d.appUsers || []).map((x: any) => ({
         email: x.email, role: x.role, createdAt: x.created_at, updatedAt: x.updated_at,
@@ -1028,19 +1064,19 @@ function JobPage({
           <h3>תיאור</h3>
           <p>{job.description || "לא הוזן"}</p>
           <h3>דרישות חובה</h3>
-          <p>{job.must || "לא הוזנו"}</p>
+          {job.must ? <TextBullets text={job.must} /> : <p>לא הוזנו</p>}
           {job.preferred && (
             <>
               <h3>דרישות יתרון</h3>
-              <p>{job.preferred}</p>
+              <TextBullets text={job.preferred} />
             </>
           )}
           <h3>דגשים מקצועיים</h3>
-          <p>{job.emphasis || "לא הוזנו"}</p>
+          {job.emphasis ? <TextBullets text={job.emphasis} /> : <p>לא הוזנו</p>}
           {job.personality && (
             <>
               <h3>דגשים אישיותיים</h3>
-              <p>{job.personality}</p>
+              <TextBullets text={job.personality} />
             </>
           )}
           <h3>טכנולוגיות</h3>
@@ -1052,7 +1088,7 @@ function JobPage({
           {job.notes && (
             <>
               <h3>הערות פנימיות</h3>
-              <p>{job.notes}</p>
+              <TextBullets text={job.notes} />
             </>
           )}
         </section>
@@ -1111,7 +1147,7 @@ function JobPage({
   );
 }
 
-type ScanMatch = { candidateId: number; name: string; score: number; fit_label: string; bottom_line: string; strengths: string[]; gaps: string[]; alreadyLinked: boolean; archivedApplicationId: number | null };
+type ScanMatch = { source: "candidate" | "team_member"; id: number; name: string; score: number; fit_label: string; bottom_line: string; strengths: string[]; gaps: string[]; alreadyLinked: boolean; archivedApplicationId: number | null; candidateArchived: boolean };
 
 function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }: {
   jobId: number;
@@ -1121,27 +1157,37 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
   close: () => void;
   onAdded: () => void;
 }) {
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const keyOf = (m: ScanMatch) => `${m.source}:${m.id}`;
 
-  function toggle(id: number) {
+  function toggle(key: string) {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
   }
 
   async function addSelected() {
-    const toAdd = results.filter(m => selected.has(m.candidateId) && !m.alreadyLinked);
+    const toAdd = results.filter(m => selected.has(keyOf(m)) && !m.alreadyLinked);
     if (toAdd.length === 0) return;
     setSaving(true);
     setSaveError("");
     try {
       await Promise.all(toAdd.map(async (m) => {
-        if (m.archivedApplicationId) {
-          // Restore archived application
+        if (m.source === "team_member") {
+          // Team members aren't linked directly — promote to a candidate record first, which also
+          // creates the application to this job.
+          const r = await fetch("/api/team/promote-to-candidate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ memberId: m.id, jobIds: [jobId] }),
+          });
+          if (!r.ok) { const d = await r.json(); throw new Error(d.error || "שגיאה"); }
+        } else if (m.archivedApplicationId) {
+          // Restore archived application (also unarchives the candidate, server-side)
           const r = await fetch("/api/recruiting", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -1149,11 +1195,11 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
           });
           if (!r.ok) { const d = await r.json(); throw new Error(d.error || "שגיאה"); }
         } else {
-          // Create new application
+          // Create new application (also unarchives the candidate, server-side, if needed)
           const r = await fetch("/api/recruiting", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ entity: "application", candidateId: m.candidateId, jobId }),
+            body: JSON.stringify({ entity: "application", candidateId: m.id, jobId }),
           });
           if (!r.ok) { const d = await r.json(); throw new Error(d.error || "שגיאה"); }
         }
@@ -1166,7 +1212,7 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
     }
   }
 
-  const newToAdd = results.filter(m => selected.has(m.candidateId) && !m.alreadyLinked);
+  const newToAdd = results.filter(m => selected.has(keyOf(m)) && !m.alreadyLinked);
 
   return (
     <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) close(); }}>
@@ -1176,25 +1222,25 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
           <button onClick={close}>×</button>
         </div>
         <p className="scan-modal-subtitle">
-          נסרקו {scanned} מועמדים — <strong>{results.length}</strong> עם ציון 60 ומעלה.
-          {results.length > 0 && " סמן את המועמדים שברצונך להוסיף למשרה."}
+          נסרקו {scanned} (מועמדים בארכיון ופעילים + עובדי צוות) — <strong>{results.length}</strong> עם ציון 60 ומעלה.
+          {results.length > 0 && " סמן את מי שברצונך להוסיף למשרה."}
         </p>
         {results.length === 0 ? (
-          <p style={{ padding: "20px 24px", color: "var(--muted)" }}>לא נמצאו מועמדים עם ציון 60 ומעלה.</p>
+          <p style={{ padding: "20px 24px", color: "var(--muted)" }}>לא נמצאו התאמות עם ציון 60 ומעלה.</p>
         ) : (
           <div className="scan-results-list">
             {results.map(m => (
               <div
-                key={m.candidateId}
-                className={`scan-candidate-card${selected.has(m.candidateId) ? " selected" : ""}${m.alreadyLinked ? " already-linked" : ""}`}
-                onClick={() => !m.alreadyLinked && toggle(m.candidateId)}
+                key={keyOf(m)}
+                className={`scan-candidate-card${selected.has(keyOf(m)) ? " selected" : ""}${m.alreadyLinked ? " already-linked" : ""}`}
+                onClick={() => !m.alreadyLinked && toggle(keyOf(m))}
               >
                 <div className="scan-card-top">
                   {!m.alreadyLinked && (
                     <input
                       type="checkbox"
-                      checked={selected.has(m.candidateId)}
-                      onChange={() => toggle(m.candidateId)}
+                      checked={selected.has(keyOf(m))}
+                      onChange={() => toggle(keyOf(m))}
                       onClick={e => e.stopPropagation()}
                     />
                   )}
@@ -1204,8 +1250,10 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
                     <span className={`pill ${m.fit_label === "מתאים" ? "success" : m.fit_label === "מתאים חלקית" ? "warning" : "neutral"}`}>
                       {m.fit_label}
                     </span>
+                    {m.source === "team_member" && <span className="pill neutral">עובד פנימי</span>}
+                    {m.candidateArchived && <span className="pill neutral">פרופיל בארכיון</span>}
                     {m.alreadyLinked && <span className="pill success">משויך</span>}
-                    {!m.alreadyLinked && m.archivedApplicationId && <span className="pill neutral">בארכיון</span>}
+                    {!m.alreadyLinked && m.archivedApplicationId && <span className="pill neutral">מועמדות בארכיון</span>}
                   </div>
                 </div>
                 <p className="scan-card-bottomline">{m.bottom_line}</p>
@@ -1232,7 +1280,7 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
           <button className="secondary" onClick={close}>סגור</button>
           {newToAdd.length > 0 && (
             <button className="primary" disabled={saving} onClick={addSelected}>
-              {saving ? "מוסיף..." : `✦ הוסף ${newToAdd.length} מועמד${newToAdd.length > 1 ? "ים" : ""} למשרה`}
+              {saving ? "מוסיף..." : `✦ הוסף ${newToAdd.length} למשרה`}
             </button>
           )}
         </div>
@@ -1486,7 +1534,7 @@ function CandidatePage({
   const [tab, setTab] = useState("overview"),
     [summary, setSummary] = useState(c.interviewSummary),
     [saving, setSaving] = useState(false),
-    [rawInterview, setRawInterview] = useState(""),
+    [rawInterview, setRawInterview] = useState(c.interviewRawMaterial),
     [summaryDraft, setSummaryDraft] = useState(""),
     [summaryUncertainties, setSummaryUncertainties] = useState<string[]>([]),
     [summarizing, setSummarizing] = useState(false),
@@ -1501,6 +1549,10 @@ function CandidatePage({
   useEffect(
     () => setSummary(c.interviewSummary),
     [c.applicationId, c.interviewSummary],
+  );
+  useEffect(
+    () => setRawInterview(c.interviewRawMaterial),
+    [c.applicationId, c.interviewRawMaterial],
   );
   useEffect(() => {
     setNextActionValue(c.nextAction);
@@ -1541,10 +1593,15 @@ function CandidatePage({
     }
   }
   function approveInterviewDraft() {
-    setSummary(summaryDraft);
+    // Uncertainties were only ever shown for review and discarded on approval — fold them into the
+    // saved summary so they aren't lost the moment the draft is approved.
+    const uncertaintiesBlock = summaryUncertainties.length
+      ? `\n\nנקודות שה-AI לא הצליח לקבוע בוודאות:\n${summaryUncertainties.map((u) => `- ${u}`).join("\n")}`
+      : "";
+    setSummary(summaryDraft + uncertaintiesBlock);
     setSummaryDraft("");
     setSummaryUncertainties([]);
-    setSummaryMessage("הטיוטה הועברה לשדה סיכום הראיון. בדוק אותה ולחץ על שמירה כדי לעדכן את המועמדות.");
+    setSummaryMessage("הטיוטה הועברה לשדה סיכום הראיון, כולל נקודות אי-הוודאות. בדוק אותה ולחץ על שמירה כדי לעדכן את המועמדות.");
   }
   async function addToJob() {
     if (!addJobId) return;
@@ -1678,8 +1735,8 @@ function CandidatePage({
         {[
           ["overview", "סקירה"],
           ["cv", "קורות חיים"],
-          ["interview", "סיכום ראיון"],
           ["eval-pre", "הערכה לפני ראיון"],
+          ["interview", "סיכום ראיון"],
           ["eval-post", "הערכה לאחר ראיון"],
         ].map(([k, l]) => (
           <button
@@ -1785,7 +1842,7 @@ function CandidatePage({
                   </div>
                   <button
                     className="ai-button"
-                    onClick={() => setTab("evaluation")}
+                    onClick={() => setTab(c.evaluationType === "לאחר ראיון" ? "eval-post" : "eval-pre")}
                   >
                     ✦ צפייה בהערכה המלאה
                   </button>
@@ -1834,18 +1891,53 @@ function CandidatePage({
       )}
       {tab === "interview" && (
         <div className="interview-workspace">
+          {applications.filter((a) => a.applicationId !== c.applicationId && a.interviewRawMaterial.trim()).length > 0 && (
+            <section className="panel editor-panel">
+              <h2>חומר גלם מראיונות קודמים למועמד זה</h2>
+              <p>המועמד רואיין בעבר עבור משרות אחרות. אפשר לטעון לכאן את חומר הגלם המקורי ולהפיק ממנו סיכום מותאם למשרה הנוכחית — חלק מהראיון עשוי לא להיות רלוונטי, אבל מה שכן רלוונטי חוסך ראיון חוזר.</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {applications
+                  .filter((a) => a.applicationId !== c.applicationId && a.interviewRawMaterial.trim())
+                  .map((a) => (
+                    <div key={a.applicationId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "8px 12px", background: "#f8f9fb", borderRadius: 8 }}>
+                      <span>{a.role} · {a.client}</span>
+                      <button
+                        className="secondary"
+                        onClick={() => {
+                          if (rawInterview.trim() && !confirm("יש כבר טקסט בתיבת חומר הגלם — לדרוס אותו בחומר מהראיון הקודם?")) return;
+                          setRawInterview(a.interviewRawMaterial);
+                        }}
+                      >
+                        טעינת חומר זה
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </section>
+          )}
           <section className="panel editor-panel raw-interview-panel">
             <h2>יצירת סיכום מחומר גלם באמצעות AI</h2>
-            <p>הדבק תמלול Teams, הערות חופשיות, או העלה קובץ טקסט/Word (.txt, .docx). ה-AI יכין טיוטה בלבד ולא ישנה את הסיכום המאושר ללא אישורך.</p>
+            <p>הדבק תמלול Teams, הערות חופשיות, או העלה קובץ טקסט/Word/PDF (.txt, .docx, .pdf). ה-AI יכין טיוטה בלבד ולא ישנה את הסיכום המאושר ללא אישורך.</p>
             <textarea value={rawInterview} onChange={(e) => setRawInterview(e.target.value)} placeholder="הדבק כאן את חומר הגלם מהראיון..." />
             <div className="editor-actions" style={{flexWrap:"wrap",gap:8}}>
               <label className="secondary" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6}}>
                 📎 העלאת קובץ תמלול
-                <input type="file" accept=".txt,.docx,.doc,.pdf" style={{display:"none"}} onChange={async (ev) => {
+                <input type="file" accept=".txt,.docx,.pdf" style={{display:"none"}} onChange={async (ev) => {
                   const f = ev.target.files?.[0]; if (!f) return;
-                  if (f.name.endsWith(".txt")) { setRawInterview(await f.text()); }
-                  else { setRawInterview(`[קובץ ${f.name} — ${(f.size/1024).toFixed(0)} KB. אנא הדבק את תוכן הקובץ ידנית כטקסט.]`); }
                   ev.target.value = "";
+                  if (f.name.toLowerCase().endsWith(".txt")) { setRawInterview(await f.text()); return; }
+                  setSummaryMessage("מחלץ טקסט מהקובץ...");
+                  try {
+                    const form = new FormData();
+                    form.append("file", f);
+                    const r = await fetch("/api/interview/extract-text", { method: "POST", body: form });
+                    const d = await r.json();
+                    if (!r.ok) throw new Error(d.error || "חילוץ הטקסט נכשל");
+                    setRawInterview(d.text);
+                    setSummaryMessage("");
+                  } catch (err) {
+                    setSummaryMessage(err instanceof Error ? err.message : "חילוץ הטקסט נכשל");
+                  }
                 }} />
               </label>
               <button className="ai-button inline-ai" disabled={summarizing || rawInterview.trim().length < 50} onClick={createInterviewDraft}>
@@ -1933,8 +2025,8 @@ function CvPanel({
     setMessage("");
     try {
       const r = useAi
-        ? await fetch("/api/cv/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ applicationId: c.applicationId }) })
-        : await fetch(`/api/cv?applicationId=${c.applicationId}&mode=details`);
+        ? await fetch("/api/cv/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ candidateId: c.id }) })
+        : await fetch(`/api/cv?candidateId=${c.id}&mode=details`);
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "ניתוח הפרטים נכשל");
       setDetails(d.details);
@@ -1952,13 +2044,13 @@ function CvPanel({
     try {
       const form = new FormData();
       form.append("file", file);
-      form.append("applicationId", String(c.applicationId));
+      form.append("candidateId", String(c.id));
       const r = await fetch("/api/cv", { method: "POST", body: form });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "העלאת הקובץ נכשלה");
       setMessage(d.extractionStatus);
       await refresh();
-      if (d.textLength) await loadDetails(false);
+      if (d.textLength) await loadDetails(true);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "העלאת הקובץ נכשלה");
     } finally {
@@ -1993,8 +2085,8 @@ function CvPanel({
         <div>
           <h2>קורות חיים</h2>
           <p>
-            PDF בלבד, עד 10MB. לאחר החילוץ יש לבדוק ולאשר את הפרטים לפני עדכון
-            הכרטיס.
+            PDF או Word (.docx), עד 10MB. לאחר החילוץ יש לבדוק ולאשר את הפרטים
+            לפני עדכון הכרטיס.
           </p>
         </div>
         <label
@@ -2003,11 +2095,11 @@ function CvPanel({
           {uploading
             ? "מעלה ומחלץ טקסט..."
             : c.cvFilename
-              ? "החלפת PDF"
-              : "העלאת PDF"}
+              ? "החלפת קורות חיים"
+              : "העלאת קורות חיים"}
           <input
             type="file"
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             disabled={uploading}
             onChange={(e) => {
               const file = e.target.files?.[0];
@@ -2038,19 +2130,12 @@ function CvPanel({
             </div>
             <a
               className="secondary"
-              href={`/api/cv?applicationId=${c.applicationId}`}
+              href={`/api/cv?candidateId=${c.id}`}
               target="_blank"
               rel="noreferrer"
             >
               פתיחת הקובץ
             </a>
-            <button
-              className="secondary"
-              disabled={!c.cvTextLength || parsing}
-              onClick={() => loadDetails(false)}
-            >
-              {parsingMode === "quick" ? "מחלץ..." : "חילוץ מהיר ללא AI"}
-            </button>
             <button
               className="primary"
               disabled={!c.cvTextLength || parsing}
@@ -2197,6 +2282,33 @@ function CvPanel({
     </section>
   );
 }
+// סדר השדות הצפוי בפלט ה-AI — משמש להצגת התקדמות חיה תוך כדי כתיבה. שונה בין הערכה לפני/אחרי ראיון
+// כי לכל אחת schema אחר לגמרי.
+const PRE_EVAL_FIELD_STEPS: Array<[string, string]> = [
+  ["core_role", "ליבת המשרה"],
+  ["fit_table", "התאמה מול דרישות המשרה"],
+  ["decision", "החלטה"],
+  ["decision_reason", "נימוק ההחלטה"],
+  ["proposed_engine_rule", "כלל מוצע"],
+  ["recruitment_email", "מייל גיוס"],
+];
+const POST_EVAL_FIELD_STEPS: Array<[string, string]> = [
+  ["decision", "החלטה"],
+  ["bottom_line", "שורה תחתונה"],
+  ["executive_summary", "תקציר מנהלים"],
+  ["strengths", "חוזקות"],
+  ["gaps", "פערים"],
+  ["uncertainties", "אי-ודאויות"],
+  ["proposed_engine_rule", "כלל מוצע"],
+  ["recruitment_email", "מייל גיוס"],
+];
+function currentEvalStep(rawJsonSoFar: string, steps: Array<[string, string]>): string | null {
+  let last: string | null = null;
+  for (const [key, label] of steps) {
+    if (rawJsonSoFar.includes(`"${key}"`)) last = label;
+  }
+  return last;
+}
 function Evaluation({
   c,
   refresh,
@@ -2207,39 +2319,84 @@ function Evaluation({
   mode?: "pre" | "post";
 }) {
   const [running, setRunning] = useState(false),
+    [elapsedSec, setElapsedSec] = useState(0),
+    [streamStep, setStreamStep] = useState(""),
     [error, setError] = useState(""),
-    [feedback, setFeedback] = useState(c.evaluationFeedback || ""),
-    [feedbackSent, setFeedbackSent] = useState(false),
     [ruleUpdating, setRuleUpdating] = useState(false);
   useEffect(() => {
-    setFeedback(c.evaluationFeedback || "");
-    setFeedbackSent(false);
-  }, [c.applicationId]);
+    if (!running) return;
+    setElapsedSec(0);
+    const t = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [running]);
   const isPostMode = mode === "post";
-  const rawEval = c.evaluation;
-  // Each mode shows only its own evaluation type
-  const relevantEval: EvaluationResult | null = isPostMode
-    ? (c.evaluationType === "לאחר ראיון" ? rawEval : null)
-    : (c.evaluationType !== "לאחר ראיון" ? rawEval : null);
-  const sources = `דרישות המשרה + קורות חיים${c.recruiterOpinion ? " + חוות דעת מגייס" : ""}${(isPostMode || c.evaluationType === "לאחר ראיון") ? " + סיכום ראיון מקצועי" : ""}`;
-  const needsFinalEvaluation = Boolean(!isPostMode && rawEval && c.interviewSummary && c.evaluationType !== "לאחר ראיון");
+  // Pre and post evaluations are stored independently, so each mode reads only its own dedicated
+  // slot — running one never affects what the other mode shows.
+  const relevantEval: PreEvaluationResult | PostEvaluationResult | null = isPostMode ? c.postEvaluation : c.preEvaluation;
+  const relevantEvalDate = isPostMode ? c.postEvaluationDate : c.preEvaluationDate;
+  const sources = `דרישות המשרה + קורות חיים${c.recruiterOpinion ? " + חוות דעת מגייס" : ""}${isPostMode ? " + סיכום ראיון מקצועי" : ""}`;
   const showNoInterviewWarning = isPostMode && !c.interviewSummary;
   async function run(reviewerFeedback = "") {
     setRunning(true);
     setError("");
+    setStreamStep("");
+    // AI ישיר על קורות חיים מלאים יכול לקחת 1-3 דקות — באפר רחב לפני שנוותר, גם עם streaming.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 280_000);
     try {
       const r = await fetch("/api/evaluate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ applicationId: c.applicationId, reviewerFeedback }),
+        body: JSON.stringify({ applicationId: c.applicationId, reviewerFeedback, mode }),
+        signal: controller.signal,
       });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "הערכת המועמד נכשלה");
-      setFeedbackSent(Boolean(reviewerFeedback.trim()));
+
+      if (!r.body) throw new Error("התקבלה תשובה לא תקינה מהשרת. נסה שוב.");
+
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let rawJsonSoFar = "";
+      let doneEvent: unknown = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let evt: { type: string; text?: string; message?: string; [k: string]: unknown };
+          try {
+            evt = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (evt.type === "delta") {
+            rawJsonSoFar += evt.text ?? "";
+            const step = currentEvalStep(rawJsonSoFar, isPostMode ? POST_EVAL_FIELD_STEPS : PRE_EVAL_FIELD_STEPS);
+            if (step) setStreamStep(step);
+          } else if (evt.type === "error") {
+            throw new Error(evt.message || "הערכת המועמד נכשלה");
+          } else if (evt.type === "done") {
+            doneEvent = evt;
+          }
+        }
+      }
+
+      if (!r.ok && !doneEvent) throw new Error("השרת נתקל בשגיאה (יתכן timeout). נסה שוב בעוד רגע.");
+      if (!doneEvent) throw new Error("לא התקבלה תוצאה מהשרת. נסה שוב.");
+
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "הערכת המועמד נכשלה");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("הניתוח ארך יותר מדי זמן (מעל 4.5 דקות) ובוטל. נסה שוב — לפעמים זו תקלת רשת חד-פעמית.");
+      } else {
+        setError(err instanceof Error ? err.message : "הערכת המועמד נכשלה");
+      }
     } finally {
+      clearTimeout(timeout);
       setRunning(false);
     }
   }
@@ -2295,25 +2452,78 @@ function Evaluation({
             disabled={running || !c.cvTextLength || (isPostMode && !c.interviewSummary)}
             onClick={() => run()}
           >
-            {running ? "מנתח את ההתאמה..." : isPostMode ? "הפעלת הערכה לאחר ראיון" : "הפעלת הערכה לפני ראיון"}
+            {running ? `מנתח את ההתאמה... (${elapsedSec} שניות)` : isPostMode ? "הפעלת הערכה לאחר ראיון" : "הפעלת הערכה לפני ראיון"}
           </button>
+          {running && <small>{streamStep ? `ה-AI כותב כרגע: ${streamStep}...` : "מתחיל לנתח..."} ניתוח מלא יכול לקחת 1-3 דקות — אין צורך לרענן.</small>}
           {!c.cvTextLength && <small>יש להעלות קורות חיים ולחלץ מהם טקסט תחילה.</small>}
           {isPostMode && !c.interviewSummary && <small>יש להשלים ולאשר סיכום ראיון תחילה.</small>}
           {error && <div className="cv-message error">{error}</div>}
         </section>
       </div>
     );
-  const e = relevantEval!;
-  const recruitmentEmail = c.evaluationType === "לאחר ראיון"
-    ? e.recruitment_email
-    : e.recruitment_email.replace(/\n*שינויים מומלצים בקורות החיים[\s\S]*$/u, "").trim();
+  if (!isPostMode) {
+    const pe = relevantEval as PreEvaluationResult;
+    return (
+      <div className="evaluation-page">
+        <section className="panel evaluation-banner">
+          <div>
+            <span>החלטה</span>
+            <b className={`big-recommend ${statusClass(pe.decision)}`}>● {pe.decision}</b>
+          </div>
+          <div>
+            <span>סוג הערכה</span>
+            <b>הערכה לפני ראיון</b>
+          </div>
+          <button className="secondary" disabled={running} onClick={() => run()}>
+            {running ? "מעדכן..." : "הערכה מחדש"}
+          </button>
+        </section>
+        <div className="evaluation-source standalone-source">
+          <b>מקורות המידע</b>
+          <span>
+            {sources} · נוצרה {formatDate(relevantEvalDate)}
+          </span>
+        </div>
+        {error && <div className="cv-message error">{error}</div>}
+        <section className="panel bottom-line">
+          <span>נימוק ההחלטה</span>
+          <p>{pe.decision_reason}</p>
+        </section>
+        <section className="panel content-card">
+          <h2>ליבת המשרה</h2>
+          <p>{pe.core_role}</p>
+        </section>
+        <section className="panel content-card">
+          <h2>התאמה מול דרישות המשרה</h2>
+          <div className="evidence-list">
+            {pe.fit_table.map((row, i) => (
+              <article key={i}>
+                <b>{row.requirement}</b>
+                <p>{row.evidence}</p>
+                <span style={{ color: fitLevelColor(row.fit_level) }}>{row.fit_level}</span>
+                {row.materiality && <p><strong>מהותיות:</strong> {row.materiality}</p>}
+                {row.completable_by_naya && <p><strong>יכולת השלמה ב-NAYA:</strong> {row.completable_by_naya}</p>}
+              </article>
+            ))}
+          </div>
+        </section>
+        <section className="panel content-card recruitment-mail">
+          <h2>מייל לגיוס — החלטה על זימון לראיון</h2>
+          <p className="mail-purpose">המייל מסכם אם לזמן את המועמד לראיון מקצועי ומה הכריע את ההחלטה. אפשר להעתיק כמו שהוא או להמשיך שיח עם ה-AI לשיפור הניסוח.</p>
+          <EmailChatPanel key={relevantEvalDate} recruitmentEmail={pe.recruitment_email} applicationId={c.applicationId} evalType="ראשונית" />
+        </section>
+        <EvaluationChatPanel c={c} mode={mode} running={running} run={run} />
+        <InterviewQuestionsPanel c={c} refresh={refresh} pe={pe} />
+        {c.proposedEngineRule && c.engineRuleStatus !== "ללא הצעה" && (
+          <EngineRulePanel c={c} ruleUpdating={ruleUpdating} decideRule={decideRule} />
+        )}
+      </div>
+    );
+  }
+  const e = relevantEval as PostEvaluationResult;
+  const recruitmentEmail = e.recruitment_email;
   return (
     <div className="evaluation-page">
-      {needsFinalEvaluation && (
-        <div className="cv-message needs-final-evaluation">
-          סיכום הראיון נשמר, אך ההערכה המוצגת עדיין ראשונית. לחץ „הערכה מחדש” כדי להפיק הערכה סופית הכוללת את הראיון.
-        </div>
-      )}
       <section className="panel evaluation-banner">
         <div>
           <span>ציון התאמה</span>
@@ -2323,21 +2533,23 @@ function Evaluation({
           </strong>
         </div>
         <div>
-          <span>שורה תחתונה</span>
-          <b>{e.fit_label}</b>
-        </div>
-        <div>
-          <span>המלצה</span>
-          <b>{e.recommendation}</b>
+          <span>החלטה</span>
+          <b className={`big-recommend ${statusClass(e.decision)}`}>● {e.decision}</b>
         </div>
         <div>
           <span>סוג הערכה</span>
-          <b>{c.evaluationType}</b>
+          <b>הערכה לאחר ראיון</b>
         </div>
         <button className="secondary" disabled={running} onClick={() => run()}>
           {running ? "מעדכן..." : "הערכה מחדש"}
         </button>
       </section>
+      <div className="evaluation-source standalone-source">
+        <b>מקורות המידע</b>
+        <span>
+          {sources} · נוצרה {formatDate(relevantEvalDate)}
+        </span>
+      </div>
       {error && <div className="cv-message error">{error}</div>}
       <section className="panel bottom-line">
         <span>שורה תחתונה</span>
@@ -2346,170 +2558,238 @@ function Evaluation({
       <section className="panel content-card">
         <h2>תקציר מנהלים</h2>
         <p>{e.executive_summary}</p>
-        <div className="evaluation-source">
-          <b>מקורות המידע</b>
-          <span>
-            {sources} · נוצרה {formatDate(c.evaluationDate)}
-          </span>
-        </div>
       </section>
-      {e.gate_status !== "לא רלוונטי לתפקיד" && (
-        <>
-          <div className="eval-columns">
-            <section className="panel content-card">
-              <h2 className="green-title">במה הוא מתאים</h2>
-              <div className="evidence-list">
-                {e.strengths.map((x, i) => (
-                  <article key={i}>
-                    <b>{x.requirement}</b>
-                    <p>{x.evidence}</p>
-                    <span>{x.assessment}</span>
-                  </article>
-                ))}
-              </div>
-            </section>
-            <section className="panel content-card">
-              <h2 className="orange-title">פערים</h2>
-              <div className="evidence-list gaps-list">
-                {e.gaps.map((x, i) => (
-                  <article key={i}>
-                    <b>{x.requirement}</b>
-                    <p>
-                      <strong>מה יש:</strong> {x.candidate_has}
-                    </p>
-                    <p>
-                      <strong>מה חסר:</strong> {x.missing}
-                    </p>
-                    <span>
-                      קריטיות: {x.criticality} · {x.completion_likelihood}
-                    </span>
-                  </article>
-                ))}
-              </div>
-            </section>
-          </div>
-          <div className="eval-columns">
-            <section className="panel content-card">
-              <h2>מה לא ברור וחייבים לברר</h2>
-              <ul>
-                {e.uncertainties.map((x, i) => (
-                  <li key={i}>{x}</li>
-                ))}
-              </ul>
-              <h3>סיכונים</h3>
-              <ul>
-                {e.risks.map((x, i) => (
-                  <li key={i}>{x}</li>
-                ))}
-              </ul>
-            </section>
-            <section className="panel content-card">
-              <h2>התאמה מקצועית</h2>
-              <h3>טכנולוגיות</h3>
-              <p>{e.technology_fit}</p>
-              <h3>ניסיון ו-Seniority</h3>
-              <p>{e.experience_fit}</p>
-            </section>
-          </div>
-          {e.questions.length > 0 && (
-            <section className="panel content-card">
-              <h2>שאלות לראיון</h2>
-              <div className="question-cards">
-                {e.questions.map((q, i) => (
-                  <article key={i}>
-                    <h3>
-                      {i + 1}. {q.question}
-                    </h3>
-                    <p>
-                      <b>למה אני שואל:</b> {q.why}
-                    </p>
-                    <p>
-                      <b>תשובה טובה שאני מחפש:</b> {q.good_answer}
-                    </p>
-                    <p>
-                      <b>דגל אדום:</b> {q.red_flag}
-                    </p>
-                    <p>
-                      <b>הסבר בשבילי:</b> {q.interviewer_explanation}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            </section>
-          )}
-        </>
-      )}
-      {c.evaluationType === "לאחר ראיון" && e.cv_changes_needed && e.cv_change_recommendations?.length > 0 && (
-        <section className="panel content-card cv-changes-card">
-          <h2>שינויים מומלצים בקורות החיים לפני העברה ללקוח</h2>
-          <p>רק שינויים המבוססים על מידע שכבר קיים בקורות החיים, בראיון או במשוב שלך.</p>
-          <div className="cv-change-list">
-            {e.cv_change_recommendations.map((change, index) => (
-              <article key={index}>
-                <b>{change.location}</b>
-                <p><strong>מה לשנות או להוסיף:</strong> {change.change}</p>
-                <p><strong>למה:</strong> {change.reason}</p>
-                <small>בסיס עובדתי: {change.evidence}</small>
+      <div className="eval-columns">
+        <section className="panel content-card">
+          <h2 className="green-title">במה הוא מתאים</h2>
+          <div className="evidence-list">
+            {e.strengths.map((x, i) => (
+              <article key={i}>
+                <b>{x.requirement}</b>
+                <p>{x.evidence}</p>
               </article>
             ))}
           </div>
         </section>
+        <section className="panel content-card">
+          <h2 className="orange-title">פערים</h2>
+          <div className="evidence-list gaps-list">
+            {e.gaps.map((x, i) => (
+              <article key={i}>
+                <p>{x.gap}</p>
+                <span>
+                  קריטיות: {x.criticality} · {x.completion_likelihood}
+                </span>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+      <section className="panel content-card">
+        <h2>מה לא ברור וחייבים לברר</h2>
+        <ul>
+          {e.uncertainties.map((x, i) => (
+            <li key={i}>{x}</li>
+          ))}
+        </ul>
+      </section>
+      {e.cv_changes_needed && (
+        <div className="cv-message needs-final-evaluation">
+          נדרשים שינויים בקורות החיים לפני העברה ללקוח — פורטו בסוף מייל הגיוס למטה.
+        </div>
       )}
       <section className="panel content-card recruitment-mail">
-        <h2>{c.evaluationType === "לאחר ראיון" ? "מייל לגיוס - החלטה על העברה ללקוח" : "מייל לגיוס - החלטה על זימון לראיון"}</h2>
-        <p className="mail-purpose">{c.evaluationType === "לאחר ראיון" ? "המייל חייב להנחות במפורש אם להעביר את המועמד ללקוח המגייס או לא. ההחלטה המקצועית אינה מועברת לצוות הגיוס." : "המייל מסכם אם לזמן את המועמד לראיון מקצועי ומה חשוב לבדוק בו."}</p>
-        <pre>{recruitmentEmail}</pre>
-        <button
-          className="secondary"
-          onClick={() => navigator.clipboard.writeText(recruitmentEmail)}
-        >
-          העתקת המייל
-        </button>
+        <h2>מייל לגיוס - החלטה על העברה ללקוח</h2>
+        <p className="mail-purpose">המייל חייב להנחות במפורש אם להעביר את המועמד ללקוח המגייס או לא. ההחלטה המקצועית אינה מועברת לצוות הגיוס. אפשר להעתיק כמו שהוא או להמשיך שיח עם ה-AI לשיפור הניסוח.</p>
+        <EmailChatPanel key={relevantEvalDate} recruitmentEmail={recruitmentEmail} applicationId={c.applicationId} evalType="לאחר ראיון" />
       </section>
-      <section className="panel content-card evaluation-feedback">
-        <h2>משוב ותיקונים להערכת ה-AI</h2>
-        <p>
-          אם לדעתך ההערכה החמירה מדי, פספסה ניסיון רלוונטי או נתנה משקל לא נכון
-          לדרישה מסוימת, כתוב כאן את התיקון. המערכת תפיק הערכה חדשה למועמדות הזאת בלבד.
-        </p>
-        <textarea
-          value={feedback}
-          onChange={(event) => {
-            setFeedback(event.target.value);
-            setFeedbackSent(false);
-          }}
-          placeholder="לדוגמה: ניסיון הניהול שלו מוכח גם ללא מספר שנים מדויק. יש לתת משקל גבוה יותר לניסיון בהקמה, קינפוג וניטור Kafka על Kubernetes."
-        />
-        <div className="feedback-actions">
-          <small>המשוב נשמר יחד עם ההערכה המעודכנת ואינו משנה את כללי המערכת עבור מועמדים אחרים.</small>
-          <button
-            className="primary"
-            disabled={running || !feedback.trim()}
-            onClick={() => run(feedback)}
-          >
-            {running ? "מפיק הערכה מעודכנת..." : "שליחת משוב והפקת הערכה חדשה"}
-          </button>
-        </div>
-        {feedbackSent && <div className="cv-message success">המשוב נשלח וההערכה עודכנה.</div>}
-      </section>
+      <EvaluationChatPanel c={c} mode={mode} running={running} run={run} />
       {c.proposedEngineRule && c.engineRuleStatus !== "ללא הצעה" && (
-        <section className="panel content-card engine-rule-card">
-          <h2>הצעה לשיפור רוחבי של מנוע ההערכה</h2>
-          <p>{c.proposedEngineRule}</p>
-          {c.engineRuleStatus === "ממתין לאישור" ? (
-            <div className="feedback-actions">
-              <small>רק אישור שלך יהפוך את ההצעה לכלל קבוע בהערכות הבאות.</small>
-              <div className="rule-buttons">
-                <button className="secondary" disabled={ruleUpdating} onClick={() => decideRule("reject")}>דחייה</button>
-                <button className="primary" disabled={ruleUpdating} onClick={() => decideRule("approve")}>אישור ככלל קבוע</button>
-              </div>
-            </div>
-          ) : (
-            <span className={`pill ${c.engineRuleStatus.includes("אושר") ? "success" : "neutral"}`}>{c.engineRuleStatus}</span>
-          )}
-        </section>
+        <EngineRulePanel c={c} ruleUpdating={ruleUpdating} decideRule={decideRule} />
       )}
     </div>
+  );
+}
+function EvaluationChatPanel({
+  c,
+  mode,
+  running,
+  run,
+}: {
+  c: Candidate;
+  mode: "pre" | "post";
+  running: boolean;
+  run: (reviewerFeedback?: string) => Promise<void>;
+}) {
+  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+
+  async function send() {
+    if (!input.trim()) return;
+    const userMsg = input.trim();
+    setInput("");
+    const newMessages = [...messages, { role: "user" as const, text: userMsg }];
+    setMessages(newMessages);
+    setSending(true);
+    try {
+      const r = await fetch("/api/evaluate/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: c.applicationId, messages: newMessages, mode }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "שגיאה");
+      setMessages((prev) => [...prev, { role: "assistant", text: d.reply }]);
+    } catch (err) {
+      setMessages((prev) => [...prev, { role: "assistant", text: `שגיאה: ${err instanceof Error ? err.message : "לא ידוע"}` }]);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function finalize() {
+    const transcript = messages.map((m) => `${m.role === "user" ? "שאלת המשתמש" : "תשובת ה-AI"}: ${m.text}`).join("\n\n");
+    await run(transcript);
+    setMessages([]);
+  }
+
+  return (
+    <section className="panel content-card evaluation-feedback">
+      <h2>שיח עם ה-AI על ההערכה</h2>
+      <p>
+        אפשר לשאול את ה-AI למה הגיע למסקנה מסוימת — מה בדרישות המשרה, בקורות החיים או במידע הנוסף
+        הוביל להחלטה. השיחה הזו לא משנה את ההערכה בעצמה. רק בסיום, אם תרצה, אפשר לבקש שההערכה
+        תתוקן בהתאם למה שעלה בשיחה.
+      </p>
+      {messages.length > 0 && (
+        <div className="email-chat-history">
+          {messages.map((m, i) => (
+            <div key={i} className={`email-chat-msg ${m.role}`}>
+              <pre>{m.text}</pre>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="email-chat-input">
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder='למשל: "למה קבעת שאין לו ניסיון ב-Production?" / "מה בדיוק חסר לו מול דרישות הליבה?"'
+          rows={2}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+          }}
+        />
+        <button className="ai-button" disabled={sending || !input.trim()} onClick={send}>
+          {sending ? "שולח..." : "✦ שליחה"}
+        </button>
+      </div>
+      <div className="feedback-actions">
+        <small>המשוב מתייחס למועמדות הזאת בלבד ואינו משנה את כללי המערכת עבור מועמדים אחרים.</small>
+        <button
+          className="primary"
+          disabled={running || messages.length === 0}
+          onClick={finalize}
+        >
+          {running ? "מפיק הערכה מעודכנת..." : "סיום השיח ותיקון ההערכה"}
+        </button>
+      </div>
+    </section>
+  );
+}
+function EngineRulePanel({
+  c,
+  ruleUpdating,
+  decideRule,
+}: {
+  c: Candidate;
+  ruleUpdating: boolean;
+  decideRule: (decision: "approve" | "reject") => Promise<void>;
+}) {
+  const targetTitle = instructionDefinitions.find((d) => d.key === c.proposedEngineRuleKey)?.title || "הוראת ההערכה הרלוונטית";
+  return (
+    <section className="panel content-card engine-rule-card">
+      <h2>הצעה לעדכון פרומפט ההערכה</h2>
+      <p>{c.proposedEngineRule}</p>
+      {c.engineRuleStatus === "ממתין לאישור" ? (
+        <div className="feedback-actions">
+          <small>אישור יוסיף את הכלל ישירות לטקסט הפרומפט &quot;{targetTitle}&quot; בטאב &quot;הוראות AI&quot; — תוכל לראות ולערוך אותו שם.</small>
+          <div className="rule-buttons">
+            <button className="secondary" disabled={ruleUpdating} onClick={() => decideRule("reject")}>דחייה</button>
+            <button className="primary" disabled={ruleUpdating} onClick={() => decideRule("approve")}>אישור ככלל קבוע</button>
+          </div>
+        </div>
+      ) : (
+        <span className={`pill ${c.engineRuleStatus.includes("אושר") ? "success" : "neutral"}`}>{c.engineRuleStatus}</span>
+      )}
+    </section>
+  );
+}
+function InterviewQuestionsPanel({
+  c,
+  refresh,
+  pe,
+}: {
+  c: Candidate;
+  refresh: () => Promise<void>;
+  pe: PreEvaluationResult;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  async function generate() {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await fetch("/api/evaluate/questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: c.applicationId }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "יצירת השאלות נכשלה");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "יצירת השאלות נכשלה");
+    } finally {
+      setLoading(false);
+    }
+  }
+  const questions = pe.interview_questions;
+  return (
+    <section className="panel content-card">
+      <h2>המשך ניתוח — שאלות לראיון</h2>
+      {!questions || questions.length === 0 ? (
+        <>
+          <p>קבלת עד 5 שאלות ממוקדות שנגזרות מהניסיון הספציפי של המועמד, לבדיקה מול דרישות הליבה של המשרה.</p>
+          <button className="secondary" disabled={loading} onClick={generate}>
+            {loading ? "מכין שאלות..." : "✦ קבלת שאלות לראיון"}
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="question-cards">
+            {questions.map((q, i) => (
+              <article key={i}>
+                <h3>
+                  {i + 1}. {q.question}
+                </h3>
+                <p>
+                  <b>בודקת:</b> {q.targets}
+                </p>
+                <p>
+                  <b>מה לבדוק בתשובה:</b> {q.what_to_verify}
+                </p>
+              </article>
+            ))}
+          </div>
+          <button className="secondary" disabled={loading} onClick={generate}>
+            {loading ? "מכין שאלות..." : "יצירה מחדש"}
+          </button>
+        </>
+      )}
+      {error && <div className="cv-message error">{error}</div>}
+    </section>
   );
 }
 
@@ -3127,6 +3407,8 @@ function AiInstructionsPage({
     setMessage("");
   }, [activeKey, rows]);
   if (!active) return <div className="loading">טוען הוראות...</div>;
+  const keyOrder: string[] = instructionDefinitions.map((d) => d.key);
+  const orderedRows = [...rows].sort((a, b) => keyOrder.indexOf(a.key) - keyOrder.indexOf(b.key));
   async function submit(reset = false) {
     if (reset && !confirm("להחזיר את ההוראות לגרסת ברירת המחדל? השינויים הידניים יימחקו.")) return;
     setSaving(true);
@@ -3149,12 +3431,15 @@ function AiInstructionsPage({
       </div>
       <section className="instructions-layout">
         <nav className="panel instruction-list" aria-label="סוגי הוראות AI">
-          {rows.map((row) => (
-            <button key={row.key} className={row.key === active.key ? "active" : ""} onClick={() => setActiveKey(row.key)}>
-              <b>{row.title}</b>
-              <span>{row.description}</span>
-              <small>{row.isCustom ? "נערך ידנית" : "ברירת מחדל"}</small>
-            </button>
+          {orderedRows.map((row, i) => (
+            <Fragment key={row.key}>
+              {row.group !== orderedRows[i - 1]?.group && <div className="instruction-group-label">{row.group}</div>}
+              <button className={row.key === active.key ? "active" : ""} onClick={() => setActiveKey(row.key)}>
+                <b>{row.title}</b>
+                <span>{row.description}</span>
+                <small>{row.isCustom ? "נערך ידנית" : "ברירת מחדל"}</small>
+              </button>
+            </Fragment>
           ))}
         </nav>
         <section className="panel instruction-editor">
@@ -3162,6 +3447,11 @@ function AiInstructionsPage({
             <div><h2>{active.title}</h2><p>{active.description}</p></div>
             <span className={`pill ${active.isCustom ? "warning" : "neutral"}`}>{active.isCustom ? "גרסה מותאמת" : "ברירת מחדל"}</span>
           </div>
+          {active.trigger && (
+            <div className="instruction-trigger">
+              <b>מופעל על ידי:</b> <span>{active.trigger}</span>
+            </div>
+          )}
           <textarea value={draft} onChange={(event) => { setDraft(event.target.value); setMessage(""); }} spellCheck={false} />
           <div className="instruction-meta">
             <span>{draft.length.toLocaleString("he-IL")} תווים</span>
@@ -3178,13 +3468,16 @@ function AiInstructionsPage({
   );
 }
 
+const AI_ACTIVITY_PAGE_SIZE = 50;
 function AiActivityPage({ rows: rawRows }: { rows: AiActivity[] }) {
   const rows = rawRows.filter(r => r.inputTokens > 0 || r.outputTokens > 0 || (r.actionType ?? "").trim() !== "");
+  // Totals always cover the full history, regardless of which page is currently shown.
   const total = rows.reduce((sum, row) => sum + row.estimatedCostUsd, 0);
   const tokens = rows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0);
   const [sortKey, setSortKey] = useState<"createdAt"|"actionType"|"model"|"inputTokens"|"outputTokens"|"estimatedCostUsd">("createdAt");
   const [sortDir, setSortDir] = useState<1|-1>(-1);
-  function toggleSort(k: typeof sortKey) { if (sortKey===k) setSortDir(d=>d===1?-1:1); else { setSortKey(k); setSortDir(-1); } }
+  const [page, setPage] = useState(0);
+  function toggleSort(k: typeof sortKey) { if (sortKey===k) setSortDir(d=>d===1?-1:1); else { setSortKey(k); setSortDir(-1); } setPage(0); }
   const SH = ({k,children}:{k:typeof sortKey;children:React.ReactNode}) => (
     <button className="sort-head" onClick={()=>toggleSort(k)}>{children}{sortKey===k?(sortDir===1?" ↑":" ↓"):""}</button>
   );
@@ -3192,18 +3485,21 @@ function AiActivityPage({ rows: rawRows }: { rows: AiActivity[] }) {
     const av=a[sortKey], bv=b[sortKey];
     return (typeof av==="number" ? av-Number(bv) : String(av||"").localeCompare(String(bv||""),"he")) * sortDir;
   });
+  const pageCount = Math.max(1, Math.ceil(sorted.length / AI_ACTIVITY_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const paged = sorted.slice(safePage * AI_ACTIVITY_PAGE_SIZE, safePage * AI_ACTIVITY_PAGE_SIZE + AI_ACTIVITY_PAGE_SIZE);
   return (
     <>
       <Heading title="פעילות AI ועלויות" subtitle="יומן הפעולות שבוצעו מתוך המערכת והעלות המשוערת שלהן." />
       <section className="stats-grid ai-stats">
-        <Stat icon="✦" tone="purple" value={rows.length} label="פעולות AI" note="100 הפעולות האחרונות" />
-        <article className="stat-card"><div className="stat-icon green">$</div><div><strong>${total.toFixed(4)}</strong><span>עלות משוערת</span><small>לפי תעריפי המודל</small></div></article>
-        <article className="stat-card"><div className="stat-icon blue">#</div><div><strong>{tokens.toLocaleString("he-IL")}</strong><span>טוקנים</span><small>קלט ופלט יחד</small></div></article>
+        <Stat icon="✦" tone="purple" value={rows.length} label="פעולות AI" note="כל ההיסטוריה" />
+        <article className="stat-card"><div className="stat-icon green">$</div><div><strong>${total.toFixed(4)}</strong><span>עלות משוערת</span><small>לפי תעריפי המודל · כל ההיסטוריה</small></div></article>
+        <article className="stat-card"><div className="stat-icon blue">#</div><div><strong>{tokens.toLocaleString("he-IL")}</strong><span>טוקנים</span><small>קלט ופלט יחד · כל ההיסטוריה</small></div></article>
       </section>
       <section className="panel table-panel">
         <div className="panel-head padded"><div><h2>יומן פעולות</h2><p>החיוב הרשמי מופיע בחשבון CodeMie. הסכומים כאן הם אומדן.</p></div></div>
         <div className="table-wrap">
-          <table><thead><tr>
+          <table className="ai-activity-table"><thead><tr>
             <th><SH k="createdAt">תאריך</SH></th>
             <th><SH k="actionType">פעולה</SH></th>
             <th>פריט</th>
@@ -3212,10 +3508,20 @@ function AiActivityPage({ rows: rawRows }: { rows: AiActivity[] }) {
             <th><SH k="outputTokens">טוקנים בפלט</SH></th>
             <th><SH k="estimatedCostUsd">עלות משוערת</SH></th>
           </tr></thead>
-            <tbody>{sorted.map((row) => <tr key={row.id} className="static-row"><td>{formatDate(row.createdAt)}</td><td><b>{row.actionType}</b></td><td>{row.subjectLabel}</td><td>{row.model}</td><td>{row.inputTokens.toLocaleString("he-IL")}{row.cachedInputTokens > 0 && <small className="cell-sub">מתוכם {row.cachedInputTokens.toLocaleString("he-IL")} מהמטמון</small>}</td><td>{row.outputTokens.toLocaleString("he-IL")}</td><td>${row.estimatedCostUsd.toFixed(5)}</td></tr>)}</tbody>
+            <tbody>{paged.map((row) => <tr key={row.id} className="static-row"><td>{formatDate(row.createdAt)}</td><td><b>{row.actionType}</b></td><td>{row.subjectLabel}</td><td>{row.model}</td><td>{row.inputTokens.toLocaleString("he-IL")}{row.cachedInputTokens > 0 && <small className="cell-sub">מתוכם {row.cachedInputTokens.toLocaleString("he-IL")} מהמטמון</small>}</td><td>{row.outputTokens.toLocaleString("he-IL")}</td><td>${row.estimatedCostUsd.toFixed(5)}</td></tr>)}</tbody>
           </table>
         </div>
         {!rows.length && <div className="empty-panel"><span>✦</span><h2>עדיין לא נרשמו פעולות AI</h2><p>פעולות חדשות של יצירת משרה והערכת מועמד יופיעו כאן. פעולות שבוצעו לפני הוספת היומן אינן ניתנות לשחזור.</p></div>}
+        {rows.length > 0 && (
+          <div className="table-footer pagination">
+            <span>מציג {safePage * AI_ACTIVITY_PAGE_SIZE + 1}–{Math.min(sorted.length, (safePage + 1) * AI_ACTIVITY_PAGE_SIZE)} מתוך {sorted.length} פעולות</span>
+            <div className="pagination-controls">
+              <button className="secondary" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>הקודם</button>
+              <span>עמוד {safePage + 1} מתוך {pageCount}</span>
+              <button className="secondary" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>הבא</button>
+            </div>
+          </div>
+        )}
       </section>
       <div className="privacy-note ai-cost-note">העלות מחושבת לפי מספר הטוקנים ותעריף המודל בזמן הפיתוח. היא עשויה להיות שונה מעט מהחיוב בפועל, למשל עקב מטמון, מסלול עיבוד או שינוי תעריפים.</div>
     </>
@@ -3344,8 +3650,8 @@ function UsageGuide({ setView }: { setView: (v: View) => void }) {
   );
 }
 
-function EmailChatPanel({ recruitmentEmail, candidateName, jobTitle, jobClient, applicationId, evalType }: {
-  recruitmentEmail: string; candidateName: string; jobTitle: string; jobClient: string; applicationId: number; evalType: string;
+function EmailChatPanel({ recruitmentEmail, applicationId, evalType }: {
+  recruitmentEmail: string; applicationId: number; evalType: string;
 }) {
   const [messages, setMessages] = useState<Array<{role:"user"|"assistant";text:string}>>([{role:"assistant",text:recruitmentEmail}]);
   const [input, setInput] = useState(""), [sending, setSending] = useState(false);
@@ -3363,8 +3669,7 @@ function EmailChatPanel({ recruitmentEmail, candidateName, jobTitle, jobClient, 
     finally { setSending(false); }
   }
   return (
-    <div className="recruitment-mail">
-      <p className="mail-purpose">מייל מוכן להעתקה. ניתן להמשיך שיח עם ה-AI לשיפור הניסוח.</p>
+    <>
       <div className="email-chat-history">
         {messages.map((m,i)=>(
           <div key={i} className={`email-chat-msg ${m.role}`}>
@@ -3378,7 +3683,7 @@ function EmailChatPanel({ recruitmentEmail, candidateName, jobTitle, jobClient, 
         <button className="ai-button" disabled={sending||!input.trim()} onClick={send}>{sending?"שולח...":"✦ שליחה"}</button>
       </div>
       <small style={{color:"var(--muted)"}}>Ctrl+Enter לשליחה מהירה</small>
-    </div>
+    </>
   );
 }
 function GeneralAiPage({ jobs, candidates }: { jobs: Job[]; candidates: Candidate[] }) {
@@ -3419,7 +3724,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
   onEdit: () => void; onDelete: () => void; onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"timeline"|"meeting"|"insight"|"promote">("timeline");
+  const [tab, setTab] = useState<"summary"|"timeline"|"meeting"|"insight"|"promote">("summary");
   const [meetings, setMeetings] = useState<TeamMeeting[]>([]);
   const [meetingsLoaded, setMeetingsLoaded] = useState(false);
   const [transcript, setTranscript] = useState(""), [meetingDate, setMeetingDate] = useState(() => new Date().toISOString().slice(0,16));
@@ -3519,16 +3824,18 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
 
       {/* Expanded content */}
       {open && <>
-      <div style={{marginTop:14,paddingTop:14,borderTop:"1px solid var(--line)"}}>
-        {member.notes && <ReadableInterviewSummary text={member.notes} />}
-      </div>
-
-      <div className="tabs" style={{marginTop:0,marginBottom:12}}>
-        {([["timeline","ציר זמן"],["meeting","פגישה חדשה"],["insight","✦ התאמת משרות + ניתוח AI"],["promote","✦ קידום כמועמד"]] as const).map(([k,l])=>(
+      <div className="tabs" style={{marginTop:14,paddingTop:14,borderTop:"1px solid var(--line)",marginBottom:12}}>
+        {([["summary","סיכום עובד"],["timeline","ציר זמן"],["meeting","פגישה חדשה"],["insight","✦ התאמת משרות + ניתוח AI"],["promote","✦ קידום כמועמד"]] as const).map(([k,l])=>(
           <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
       {err && <div className="cv-message error" style={{marginBottom:10}}>{err}</div>}
+
+      {tab==="summary" && (
+        <div>
+          {member.notes ? <ReadableInterviewSummary text={member.notes} /> : <div className="empty-inline"><b>אין עדיין סיכום עובד</b><span>ניתן לערוך את הפרופיל כדי להוסיף פרטים.</span></div>}
+        </div>
+      )}
 
       {tab==="timeline" && (
         <div>

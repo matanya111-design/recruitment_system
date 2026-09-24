@@ -1,8 +1,9 @@
 import { getDb } from "@/db/client";
 import { requireAppIdentity } from "@/lib/auth/identity";
-import { generateStructured, estimateCost } from "@/lib/ai/provider";
+import { generateStructured, estimateCost, isAiConfigured } from "@/lib/ai/provider";
 import { INTERVIEW_SUMMARY_INSTRUCTIONS } from "@/lib/ai/prompts";
-import { aiActivityLogs, aiInstructions } from "@/db/schema";
+import { getPrompt } from "@/lib/ai/get-prompt";
+import { aiActivityLogs, applications } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
@@ -16,6 +17,24 @@ const summarySchema = {
   },
 } as const;
 
+// The model tends to write each "Header:" section as one dense sentence with " - " between
+// clauses instead of real bullets — split those into actual lines so the draft (and the saved
+// summary, since it's the same text) reads as a list instead of a text blob.
+function formatSummaryBullets(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .map((block) => {
+      const headingMatch = block.match(/^([^:\n]{2,45}):\s*([\s\S]*)$/);
+      const heading = headingMatch ? `${headingMatch[1]}:` : null;
+      const body = (headingMatch ? headingMatch[2] : block).trim();
+      const parts = body.split(/\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+      if (parts.length <= 1) return block;
+      const bulleted = parts.map((p) => `- ${p}`).join("\n");
+      return heading ? `${heading}\n${bulleted}` : bulleted;
+    })
+    .join("\n\n");
+}
+
 export async function POST(request: Request) {
   const identity = await requireAppIdentity();
   if (identity instanceof Response) return identity;
@@ -25,7 +44,7 @@ export async function POST(request: Request) {
     if (!body.applicationId) return Response.json({ error: "חסר מזהה מועמדות" }, { status: 400 });
     if (rawText.length < 50) return Response.json({ error: "חומר הגלם קצר מדי. יש להדביק תמלול או הערות מפורטות." }, { status: 400 });
     if (rawText.length > 150000) return Response.json({ error: "חומר הגלם ארוך מדי. המגבלה היא 150,000 תווים." }, { status: 400 });
-    if (!process.env.OPENAI_API_KEY) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
+    if (!isAiConfigured()) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
     const db = getDb();
     const rows = await db.execute(sql`
@@ -37,8 +56,11 @@ export async function POST(request: Request) {
     const row = (rows as unknown as { rows: Array<Record<string, unknown>> }).rows[0];
     if (!row) return Response.json({ error: "המועמדות לא נמצאה" }, { status: 404 });
 
-    const [saved] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, "interview_summary"));
-    const instructions = saved?.content ?? INTERVIEW_SUMMARY_INSTRUCTIONS;
+    // Persist the raw material regardless of what happens with the AI draft below — the user may
+    // want it later for a different job application of the same candidate (avoids re-interviewing).
+    await db.update(applications).set({ interviewRawMaterial: rawText, updatedAt: new Date() }).where(eq(applications.id, Number(body.applicationId)));
+
+    const instructions = await getPrompt("interview_summary", INTERVIEW_SUMMARY_INSTRUCTIONS);
 
     const input = `המשרה:\nשם: ${row.title}\nלקוח: ${row.client}\nתיאור: ${row.description}\nדרישות חובה: ${row.must_requirements}\nדרישות יתרון: ${row.preferred_requirements}\nטכנולוגיות: ${row.technologies}\nשנות ניסיון: ${row.min_years ?? "לא הוגדר"}\nדגשים מקצועיים: ${row.professional_emphasis}\nדגשים אישיותיים: ${row.personality_emphasis}\n\nהמועמד:\nשם: ${row.full_name}\nתפקיד מקצועי: ${row.professional_title || "לא ידוע"}\nחברה: ${row.company || "לא ידוע"}\nתקציר בכרטיס: ${row.experience_summary || "לא הוזן"}\n\nחוות דעת מגייס מהראיון הראשוני:\n${row.recruiter_opinion || "לא הוזנה"}\n\nקורות חיים כמקור משלים בלבד:\n${String(row.cv_extracted_text || "לא צורפו").slice(0, 80000)}\n\nחומר גלם מהראיון:\n${rawText}`;
 
@@ -64,7 +86,8 @@ export async function POST(request: Request) {
       estimatedCostUsd: String(cost),
     });
 
-    return Response.json({ draft: result.data, usage: result.usage });
+    const draft = { ...result.data, summary: formatSummaryBullets(result.data.summary) };
+    return Response.json({ draft, usage: result.usage });
   } catch (error) {
     console.error("Interview summarize error:", error);
     return Response.json({ error: error instanceof Error ? error.message : "יצירת הסיכום נכשלה" }, { status: 500 });

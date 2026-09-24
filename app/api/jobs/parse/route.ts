@@ -1,6 +1,6 @@
 import { getDb } from "@/db/client";
 import { requireAppIdentity } from "@/lib/auth/identity";
-import { generateStructured, estimateCost } from "@/lib/ai/provider";
+import { generateStructured, estimateCost, isAiConfigured } from "@/lib/ai/provider";
 import { JOB_PARSING_INSTRUCTIONS } from "@/lib/ai/prompts";
 import { aiActivityLogs, aiInstructions } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     const source = String(text ?? "").trim();
     if (source.length < 20) return Response.json({ error: "יש להדביק טקסט משמעותי של המשרה" }, { status: 400 });
     if (source.length > 120000) return Response.json({ error: "הטקסט ארוך מדי. יש לצמצם חתימות וקבצים מצורפים." }, { status: 413 });
-    if (!process.env.OPENAI_API_KEY) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
+    if (!isAiConfigured()) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
     const db = getDb();
     const [saved] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, "job_parsing"));

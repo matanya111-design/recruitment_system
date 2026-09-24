@@ -1,14 +1,10 @@
 import { getDb } from "@/db/client";
 import { requireAppIdentity } from "@/lib/auth/identity";
-import { generateStructured, estimateCost } from "@/lib/ai/provider";
-import { aiActivityLogs, aiInstructions } from "@/db/schema";
+import { generateStructured, estimateCost, isAiConfigured } from "@/lib/ai/provider";
+import { aiActivityLogs } from "@/db/schema";
 import { sql } from "drizzle-orm";
-import { eq } from "drizzle-orm";
-import { TEAM_MEETING_SUMMARY_INSTRUCTIONS, TEAM_JOB_MATCH_INSTRUCTIONS, TEAM_MEMBER_ANALYSIS_INSTRUCTIONS } from "@/lib/ai/team-prompts";
-
-async function getPrompt(key: string, fallback: string): Promise<string> {
-  try { const db = getDb(); const [r] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, key)); return r?.content ?? fallback; } catch { return fallback; }
-}
+import { TEAM_MEETING_SUMMARY_INSTRUCTIONS } from "@/lib/ai/team-prompts";
+import { getPrompt } from "@/lib/ai/get-prompt";
 
 const meetingSummarySchema = {
   type: "object",
@@ -18,29 +14,6 @@ const meetingSummarySchema = {
     summary: { type: "string" },
     action_items: { type: "array", items: { type: "string" } },
     insights: { type: "string" },
-  },
-} as const;
-
-const jobMatchSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["matches", "analysis"],
-  properties: {
-    matches: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["job_title", "client", "fit_score", "reason"],
-        properties: {
-          job_title: { type: "string" },
-          client: { type: "string" },
-          fit_score: { type: "integer" },
-          reason: { type: "string" },
-        },
-      },
-    },
-    analysis: { type: "string" },
   },
 } as const;
 
@@ -81,7 +54,7 @@ export async function POST(request: Request) {
   await ensureTable();
 
   const body = (await request.json()) as {
-    action: "summarize" | "save" | "match-jobs" | "analyze";
+    action: "summarize" | "save";
     memberId: number;
     meetingId?: number;
     transcript?: string;
@@ -89,15 +62,13 @@ export async function POST(request: Request) {
     actionItems?: string[];
     meetingDate?: string;
     memberName?: string;
-    memberNotes?: string;
-    jobs?: Array<{ id: number; title: string; client: string; description?: string; technologies?: string[] }>;
   };
 
   const db = getDb();
 
   // ─── AI: summarize transcript ───────────────────────────────────────────────
   if (body.action === "summarize") {
-    if (!process.env.OPENAI_API_KEY)
+    if (!isAiConfigured())
       return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
     if (!body.transcript || body.transcript.trim().length < 30)
       return Response.json({ error: "יש להדביק תמלול של לפחות 30 תווים" }, { status: 400 });
@@ -135,80 +106,6 @@ export async function POST(request: Request) {
       VALUES (${body.memberId}, ${date}, ${body.transcript ?? ""}, ${body.summary ?? ""}, ${JSON.stringify(body.actionItems ?? [])})
     `);
     return Response.json({ ok: true }, { status: 201 });
-  }
-
-  // ─── AI: match jobs ───────────────────────────────────────────────────────
-  if (body.action === "match-jobs") {
-    if (!process.env.OPENAI_API_KEY)
-      return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
-    if (!body.jobs?.length)
-      return Response.json({ error: "אין משרות במאגר" }, { status: 400 });
-
-    const jobsList = body.jobs.map(j => `- ${j.title} ב-${j.client}${j.technologies?.length ? ` | טכנולוגיות: ${j.technologies.join(", ")}` : ""}`).join("\n");
-    const input = `פרופיל העובד:\nשם: ${body.memberName}\n\nסיכום מצטבר מהפגישות:\n${body.memberNotes || "לא הוזן"}\n\nמשרות פעילות במאגר:\n${jobsList}`;
-
-    const result = await generateStructured<{ matches: Array<{ job_title: string; client: string; fit_score: number; reason: string }>; analysis: string }>({
-      operation: "team_job_match",
-      instructions: await getPrompt("team_job_match", TEAM_JOB_MATCH_INSTRUCTIONS),
-      input,
-      schemaName: "team_job_match",
-      jsonSchema: jobMatchSchema,
-      reasoningEffort: "medium",
-    });
-
-    const cost = estimateCost(result.model, result.usage);
-    await db.insert(aiActivityLogs).values({
-      actionType: "התאמת משרות לעובד",
-      subjectType: "team_member",
-      subjectLabel: body.memberName ?? "עובד",
-      model: result.model,
-      inputTokens: result.usage.input,
-      cachedInputTokens: result.usage.cached,
-      outputTokens: result.usage.output,
-      estimatedCostUsd: String(cost),
-    });
-
-    return Response.json({ result: result.data });
-  }
-
-  // ─── AI: analyze member ───────────────────────────────────────────────────
-  if (body.action === "analyze") {
-    if (!process.env.OPENAI_API_KEY)
-      return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
-
-    const analyzeSchema = {
-      type: "object", additionalProperties: false,
-      required: ["strengths", "gaps", "growth_recommendation", "next_steps"],
-      properties: {
-        strengths: { type: "array", items: { type: "string" } },
-        gaps: { type: "array", items: { type: "string" } },
-        growth_recommendation: { type: "string" },
-        next_steps: { type: "array", items: { type: "string" } },
-      },
-    } as const;
-
-    const result = await generateStructured<{ strengths: string[]; gaps: string[]; growth_recommendation: string; next_steps: string[] }>({
-      operation: "team_member_analysis",
-      instructions: await getPrompt("team_member_analysis", TEAM_MEMBER_ANALYSIS_INSTRUCTIONS),
-      input: `עובד: ${body.memberName}\n\nסיכומי פגישות:\n${body.memberNotes || "אין סיכומים עדיין"}`,
-      schemaName: "member_analysis",
-      jsonSchema: analyzeSchema,
-      reasoningEffort: "medium",
-    });
-
-    const cost = estimateCost(result.model, result.usage);
-    await db.insert(aiActivityLogs).values({
-      actionType: "ניתוח פרופיל עובד",
-      subjectType: "team_member",
-      subjectLabel: body.memberName ?? "עובד",
-      model: result.model,
-      inputTokens: result.usage.input,
-      cachedInputTokens: result.usage.cached,
-      outputTokens: result.usage.output,
-      estimatedCostUsd: String(cost),
-    });
-
-    return Response.json({ analysis: result.data });
   }
 
   return Response.json({ error: "Unknown action" }, { status: 400 });

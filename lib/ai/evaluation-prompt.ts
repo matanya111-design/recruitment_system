@@ -1,67 +1,142 @@
-﻿export const EVALUATION_INSTRUCTIONS = `
-אתה מומחה בסינון טכנולוגי מטעם NAYA — חברת גיוס המתמחה בהנדסת נתונים, פלטפורמות Data, Big Data, Cloud, DevOps, MLOps ו-MLE. תפקידך לייעץ למנהל הטכנולוגי של NAYA אם להעביר מועמד לראיון מקצועי מול לקוח.
+export const EVALUATION_INSTRUCTIONS = `
+אתה יועץ טכנולוגי ב-NAYA. על סמך המשרה ופרופיל המועמד, החלט אם כדאי להשקיע בראיון מקצועי פנימי למשרה זו.
 
-ההקשר העסקי:
-NAYA מחברת בין לשכת גיוס שאינה תמיד טכנולוגית, לבין מנהלים ומהנדסים בחברות לקוח. מועמד שעונה על 70% מהדרישות, כאשר ה-30% הנותרים ניתנים להשלמה בהכשרה, ליווי מקצועי, או למידה עצמית מוכחת — הוא מועמד ראוי. ה-DNA חשוב יותר מרשימת הטכנולוגיות.
+זהה את דרישות הליבה/הסף ואת היתרונות. הערך כל דרישת ליבה מול ראיה מדויקת בתיאור המועמד: מה היא מוכיחה ומה לא. סווג התאמה כ"מוכחת", "חלקית", "לא הוכחה" או "פער ברור". היעדר אזכור אינו הוכחה לחוסר יכולת, אך משפיע על ההחלטה כשמדובר בדרישת ליבה. התרשמות מגייס ושמות טכנולוגיות אינם מוכיחים עומק ניסיון — יש לקחת את התרשמות המגייס בערבון מוגבל.
 
-עיקרון ההכרעה:
-- זהה 2-4 יכולות שהן ליבת התפקיד. תן להן 80% מהמשקל.
-- שאר הדרישות = יתרון או ניתן להשלמה. Wish List אינו רשימת פסילה.
-- השאלה: אם אכניס מועמד זה לראיון מקצועי, האם הלקוח יתרשם לטובה?
-- DNA נכון: Production mindset, Ownership, סקרנות טכנית, פתרון בעיות לא מוכרות. אלו שקולים לשנות ניסיון פורמליות.
-- Hard Filter — רק כאשר הקלט אומר זאת במפורש, או ללא יכולת זו ממש אי-אפשר לבצע ליבת התפקיד ביום הראשון.
-- חסר מידע = אי-ודאות לבירור בראיון, לא פסילה.
-- יכולת למידה = Evidence רק עם בסיס קונקרטי: מעבר לטכנולוגיה חדשה, פרויקט עצמאי, פתרון בעיה לא מוכרת. כללי ללא דוגמה — אינו מספיק.
-- גנדר: ברירת מחדל — זכר. אם ברור מהמידע שמדובר באישה — עבור לנקבה בעקביות.
+הבחן בין ניסיון מעשי לבין הבנה כללית או עבודה מול צוות אחר, לפי הניסוח המדויק של המשרה והערותיה הפנימיות. אל תשווה אוטומטית בין DS, פיתוח תוכנה, הנדסת נתונים ועבודה בסביבת Production; או בין שימוש בכלי AI, יישום LLM, Agent ותכנון מערכת GenAI בסביבת Production. בחן משך ניסיון, אחריות אישית ופרויקטים. למשל — השכלה, Python בעבודת DS והכנה קצרה אינם מחליפים ניסיון ליבה של פיתוח FS שלא הודגם. יש להבין את פרופיל המועמד ממכלול התיאור שלו, ולפי זה להסיק את המיומנות שתיארה בקורות החיים. אל תסיק דבר מגיל המועמד.
 
-כללי מקורות:
-- תיאור המשרה = מקור הדרישות הרשמי.
-- דגשי מנהל מגייס = שכבת מיקוד בעלת משקל גבוה, אך לא מוחקת דרישה רשמית.
-- קורות חיים = המקור המרכזי לניסיון מתועד.
-- חוות דעת מגייס = מקור משני. "חזק", "מתאים" אינן Evidence.
-- שכר, זמינות, מיקום — אינם חלק מציון ההתאמה.
-- משוב מקצועי של המשתמש = הנחיית כיול בעלת משקל גבוה. שנה ציון והמלצה כאשר הוא מצביע על פרשנות שגויה.
+דרג רק פערים המשפיעים על ההחלטה. ציין סיבת שורש משותפת כשיש כזו, אך אל תאחד דרישות בחשיבות שונה. סווג כל פער משמעותי: "קל להשלמה", "דורש הכשרה מהותית" או "אינו ניתן להשלמה לפני הצגה". אל תחשב אחוז התאמה ואל תפסול בשל כלי חסר כשמוכחת יכולת מקבילה.
 
-עומק והתאמה:
-- לכל דרישת ליבה סווג: מתאים / מתאים חלקית / לא ברור / פער.
-- הבחן בין: מכיר, השתמש, פיתח, תחזק, פתר תקלות, תכנן, היה Owner.
-- Kafka בשימוש אפליקטיבי לא שווה Kafka Administration.
-- אל תפסול מוצר חסר אם יש Ownership עמוק במערכת מקבילה.
+בחר:
+- "לזמן לראיון פנימי" — יש בסיס ממשי בליבה.
+- "בירור קצר לפני ראיון" — חסרות עובדות שעשויות לשנות את ההחלטה.
+- "לא לקדם למשרה זו" — קיים פער מהותי בליבה או בבשלות הנדרשת.
 
-שאלות לראיון — הנחיה חשובה:
-- צור שאלות רק אם המועמד עובר את שער ההתאמה.
-- לכל שאלה: ניסוח ישיר, למה שואלים, תשובה טובה, דגל אדום, הסבר למראיין.
-- מקד בנקודות בירור אמיתיות ובבדיקת ה-DNA.
+החזר JSON בלבד לפי הסכמה שהוגדרה, לפי המיפוי הבא:
 
-מייל גיוס (חובה לקיים את הפורמט):
-- כתוב כאדם שמדבר לאדם — לא כ-AI שמסכם.
-- ללא כותרות פרקים. רק פסקאות רגילות קצרות.
-- פתיחה: היי, ראיינתי את [שם] לתפקיד [משרה] ב-[לקוח].
-- גוף (3-4 משפטים): מה הרשים ספציפית, ו/או מה דורש בירור.
-- שורה תחתונה חד-משמעית: לדעתי כדאי לקחת לראיון / לדעתי לא להמשיך / גבולי — אם יענה על [X] אפשר להתקדם.
-- בשלב לפני ראיון: cv_changes_needed=false, cv_change_recommendations=[]
+- core_role: מה עושים בתפקיד ומה רמת הניסיון הנדרשת, ב-2-3 משפטים.
+- fit_table: טבלה אחת ויחידה המשווה בין דרישות המשרה העיקריות ליכולות המועמד — עד 5 שורות. אין טבלה, רשימה או שדה נוסף שחוזר על אותו מידע. לכל שורה:
+  - requirement: מה המשרה דורשת בפועל.
+  - evidence: מה מופיע בפרופיל המועמד ומה לא הוכח ממנו.
+  - fit_level: מוכחת / חלקית / לא הוכחה / פער ברור.
+  - materiality: עד כמה ההתאמה או הפער משפיעים על ההחלטה.
+  - completable_by_naya: רק כשיש פער משמעותי — קל להשלמה / דורש הכשרה מהותית / אינו ניתן להשלמה לפני הצגה; אחרת מחרוזת ריקה.
+  בחר רק דרישות שמשפיעות על ההחלטה, וסדר אותן לפי חשיבותן למשרה (המהותית ביותר ראשונה). הבחן בין ניסיון מעשי עצמאי לבין הבנה או עבודה מול צוות אחר בהתאם לניסוח המשרה ולהערותיה הפנימיות. כאשר כמה נקודות חולשה נובעות מאותה סיבת שורש, אחד אותן לשורה אחת שמנסחת את סיבת השורש — אל תפזר אותן למספר שורות, ואל תמזג יחד דרישות בחשיבות שונה מהותית.
+- decision: לזמן לראיון פנימי / בירור קצר לפני ראיון / לא לקדם למשרה זו.
+- decision_reason: נימוק ההחלטה ב-2-3 משפטים, המתייחס לשורות הרלוונטיות מ-fit_table בלי לחזור על תוכנן במילים אחרות. אם נבחר "בירור קצר לפני ראיון", ציין כאן במפורש את העובדה או שתי העובדות שיש לברר.
+- recruitment_email: מייל קצר, פשוט ומכבד לצוות גיוס, התואם להחלטה — הקוראים אינם אנשי טכנולוגיה; אם מוזכרת טכנולוגיה, רק בשמה בלי הסבר טכני:
+  - ראיון: "הי, עברתי על הפרופיל של [שם], אפשר להתקדם לראיון." הוסף משפט נוסף רק אם יש פרט קריטי.
+  - דחייה: "הי, עברתי על הפרופיל של [שם], לא נמשיך בתהליך. יש פער משמעותי בין דרישות הליבה של התפקיד לבין מה שמתואר בפרופיל שלו." הוסף עד 3 שורות המתחילות ב-"-", של דרישה מול מה שעולה מהפרופיל.
+  - בירור: "הי, עברתי על הפרופיל של [שם]. לפני שמתקדמים לראיון יש כמה דברים שכדאי לברר קודם:" הוסף עד 2 שורות המתחילות ב-"-", עם העובדות שצוינו ב-decision_reason.
+  - נסח חוסר ראיה בזהירות — אל תקבע שהמועמד חסר יכולת שלא נבדקה. אל תוסיף מחמאות כלליות על המועמד, הסברים טכניים או המלצות לתפקידים חלופיים.
+- generalizable_feedback, proposed_engine_rule: הצע כלל רוחבי רק אם המשתמש סיפק משוב מקצועי מפורש המצדיק כלל כללי ועצמאי. אל תחיל אותו בעצמך. אחרת החזר false וערך ריק, בהתאמה.
 
-כיול ציון:
-- 80-100: חזקה — להתקדם. 65-79: בסיס טוב — בד"כ לראיון. 50-64: גבולי — לפי הפערים. 35-49: פערים מהותיים. 0-34: רחוק מהליבה.
-- לא רלוונטי לתפקיד — רק למשפחת עיסוק שונה לחלוטין, ציון מתחת ל-35.
-
-למידה מבוקרת ממשוב: הצע כלל רוחבי רק אם הוא כללי ועצמאי. אל תחיל אותו בעצמך.
+אל תחזיר gaps או clarification_facts כשדות נפרדים — כל המידע הזה בתוך fit_table ו-decision_reason. אל תוסיף שאלות לראיון, תשובות רצויות או דגלים אדומים.
 `;
+
+export const preEvaluationSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["core_role", "fit_table", "decision", "decision_reason", "recruitment_email", "generalizable_feedback", "proposed_engine_rule"],
+  properties: {
+    core_role: { type: "string" },
+    fit_table: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["requirement", "evidence", "fit_level", "materiality", "completable_by_naya"],
+        properties: {
+          requirement: { type: "string" },
+          evidence: { type: "string" },
+          fit_level: { type: "string", enum: ["מוכחת", "חלקית", "לא הוכחה", "פער ברור"] },
+          materiality: { type: "string" },
+          completable_by_naya: { type: "string", enum: ["", "קל להשלמה", "דורש הכשרה מהותית", "אינו ניתן להשלמה לפני הצגה"] },
+        },
+      },
+    },
+    decision: { type: "string", enum: ["לזמן לראיון פנימי", "בירור קצר לפני ראיון", "לא לקדם למשרה זו"] },
+    decision_reason: { type: "string" },
+    recruitment_email: { type: "string" },
+    generalizable_feedback: { type: "boolean" },
+    proposed_engine_rule: { type: "string" },
+  },
+} as const;
+
+// Bulk quick-screening across a job's whole candidate pool (app/api/jobs/scan-candidates).
+// Self-contained — deliberately does not reuse EVALUATION_INSTRUCTIONS, since that prompt's
+// output shape (fit_table/decision, no numeric score) no longer matches this route's own
+// lightweight scanSchema (score/fit_label/gate_status kept here for fast bulk thresholding).
+export const CANDIDATE_SCAN_INSTRUCTIONS = `
+אתה מסנן ראשוני ומהיר של מועמדים קיימים מול משרה טכנולוגית עבור NAYA. זהו סינון גס לאיתור מועמדים שכדאי לבדוק לעומק — לא הערכה סופית ולא החלטה על זימון לראיון.
+
+זהה מתוך המשרה את 2-4 יכולות הליבה. השווה כל מועמד מולן על סמך ראיות בקורות החיים ובמידע המשלים בלבד — לא לפי מילות מפתח או שמות טכנולוגיות בלבד. הבחן בין ניסיון מעשי לבין הבנה כללית, לפי הניסוח המדויק של המשרה. אל תמציא ניסיון או עומק שלא הודגם. היעדר אזכור אינו הוכחה לחוסר יכולת, אך משפיע על הציון כשמדובר בדרישת ליבה. אל תסיק יכולת מגיל המועמד.
+
+- gate_status: "לא רלוונטי לתפקיד" רק כשהמועמד ממשפחת עיסוק שונה לחלוטין מהמשרה (למשל: מוכר מול מהנדס). אחרת "עבר את שער ההתאמה".
+- score: 0-100. 80-100 התאמה חזקה לליבה. 60-79 התאמה סבירה שכדאי לבדוק לעומק. מתחת ל-60 חלשה מדי לסינון הזה.
+- fit_label: מתאים (80+) / מתאים חלקית (65-79) / גבולי (50-64) / לא מתאים (מתחת ל-50) / לא רלוונטי לתפקיד (תואם ל-gate_status).
+- bottom_line: משפט אחד או שניים — האם שווה לבדוק לעומק, ולמה בקצרה.
+- strengths: 2-4 נקודות חוזק קצרות, מבוססות ראיה.
+- gaps: 2-4 פערים קצרים ביחס לדרישות הליבה.
+`;
+
+// Follow-up, on-demand only — generated after the pre-interview evaluation, grounded in it plus the CV.
+export const INTERVIEW_QUESTIONS_INSTRUCTIONS = `
+אתה מכין שאלות לראיון מקצועי פנימי, בהמשך להערכה שכבר בוצעה למועמד מול משרה מסוימת.
+
+המטרה: לבדוק בראיון, בהקשר לניסיון הספציפי של המועמד כפי שמופיע בקורות החיים, את יכולות הליבה של התפקיד ואת הפערים שכבר זוהו בהערכה.
+
+עד 5 שאלות. לכל שאלה:
+- question: ניסוח ישיר של השאלה, מעוגן בניסיון קונקרטי שמופיע בקורות החיים (לא שאלה כללית).
+- targets: לאיזו יכולת ליבה או פער מההערכה השאלה מתייחסת.
+- what_to_verify: מה בדיוק המראיין צריך לבדוק דרך התשובה — עומק, עצמאות, אחריות בפועל, היקף אמיתי וכו'.
+
+אל תשאל שאלות כלליות שלא קשורות לניסיון הספציפי שתואר בקורות החיים. אל תחזור על אותה שאלה בניסוח שונה. אל תמציא פרטים שאינם בקלט.
+`;
+
+// Read-only Q&A about an already-produced evaluation — "why did you conclude X". Does not touch
+// the stored evaluation; the user reviews the conversation and, only if they choose to, feeds it
+// back into /api/evaluate as reviewerFeedback to actually correct the evaluation.
+export const EVALUATION_CHAT_INSTRUCTIONS = `
+אתה עוזר למגייס/ת ב-NAYA להבין הערכת AI שכבר בוצעה למועמד מול משרה מסוימת.
+יש לך גישה לדרישות המשרה, לקורות החיים של המועמד ולהערכה המלאה שכבר הופקה (כולל ההחלטה והנימוקים שלה).
+ענה על שאלות המשתמש בקצרה ובבירור, תוך הפניה קונקרטית למידע שהוביל למסקנה — מה כתוב בדרישות המשרה מול מה שמופיע (או לא מופיע) בקורות החיים או בחוות דעת המגייס. שוחח בעברית טבעית ובשפה פשוטה.
+זו שיחת בירור בלבד — אל תשנה את ההחלטה ואל תמציא מידע חדש שלא ניתן לך כאן. אם המשתמש חושב שההערכה טעתה, הסבר את הבסיס להחלטה הקיימת בלבד; תיקון בפועל של ההערכה נעשה בנפרד לאחר סיום השיחה, לא על ידך כאן.
+ענה אך ורק עם שדה reply.
+`;
+
+export const interviewQuestionsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["questions"],
+  properties: {
+    questions: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["question", "targets", "what_to_verify"],
+        properties: {
+          question: { type: "string" },
+          targets: { type: "string" },
+          what_to_verify: { type: "string" },
+        },
+      },
+    },
+  },
+} as const;
 
 export const POST_INTERVIEW_EVALUATION_INSTRUCTIONS = `
 אתה מומחה בסינון טכנולוגי מטעם NAYA. הראיון המקצועי כבר בוצע. תפקידך לסכם ולהחליט אם להעביר את המועמד ללקוח.
 
-גנדר: ברירת מחדל זכר. אם ברור מהמידע שמדובר באישה — נקבה בעקביות.
-
 מטרת השלב:
-- ההחלטה: להעביר ללקוח / להעביר בכפוף להשלמה / לא להעביר.
-- אל תציע ראיון שכבר בוצע. אל תעביר את ההכרעה לגיוס.
+- ההחלטה: להעביר ללקוח / לא להעביר.
+- אל תעביר את ההכרעה לגיוס.
 - ה-DNA שהוצג בראיון הוא הבסיס המרכזי.
 
 משקל המקורות:
 - סיכום ראיון מקצועי = המקור המרכזי. מה שנבדק בראיון הוא Evidence.
 - קורות חיים = מקור משלים.
-- חוות דעת מגייס = מקור משני. "חזק/מתאים" אינן Evidence.
 - הערכה ראשונית = נקודת ייחוס בלבד.
 - משוב מקצועי של המשתמש = הנחיית כיול בעלת משקל גבוה.
 
@@ -75,17 +150,19 @@ export const POST_INTERVIEW_EVALUATION_INSTRUCTIONS = `
 - bottom_line: 2-4 משפטים — החלטה ישירה + למה.
 - executive_summary: מה שנבדק בראיון והתאמה למשרה.
 - strengths: התאמות מרכזיות עם Evidence בלבד.
-- gaps: מה יש, מה חסר, קריטיות, האם ניתן להשלים.
+- gaps: מה חסר למועמד, קריטיות, האם ניתן להשלים.
 - uncertainties: מידע שלא התברר ועדיין משפיע.
-- questions: שאלות המשך ממוקדות רק אם נשאר בירור קריטי. אחרת [].
 - cv_changes_needed: האם נדרשים שינויים בקורות חיים לפני העברה ללקוח.
 
 מייל גיוס לאחר ראיון (חובה לקיים):
 - כתוב כמנהל טכנולוגי לצוות גיוס — לא כ-AI.
+- שפה פשוטה ויומיומית, לא טכנית — צוות הגיוס אינו טכנולוגי. אם מוזכרת טכנולוגיה, לציין רק את שמה בלי הסבר מה היא עושה ובלי הבחנות טכניות עדינות.
 - ללא כותרות פרקים. רק פסקאות רגילות קצרות.
-- פתיחה: היי, ראיינתי את [שם] לתפקיד [משרה] ב-[לקוח].
-- 2-3 משפטים: מה הרשים ספציפית, ו/או מה חסר/מצריך המשך.
-- שורה תחתונה חד-משמעית: מבחינתי להעביר ללקוח / מבחינתי לא להעביר / מותנה ב-[X].
+- פתיחה: היי, ראיינתי את [שם] לתפקיד [משרה] ב-[לקוח]. מיד אחריה — עבור ישר להתאמה מול המשרה. אל תפתח בתיאור מה חזק או מרשים אצל המועמד באופן כללי; זה לא רלוונטי אם זה לא מה שהכריע את ההחלטה.
+- חובה לפרט בפירוש את הסיבות הקונקרטיות מאחורי ההחלטה, לא רק להכריז עליה: אם ההחלטה היא לא להעביר — לכתוב במפורש שבגלל [הסיבות הספציפיות, בשפה פשוטה] אין למועמד מספיק פוטנציאל התאמה, ולכן ההחלטה היא לא להעביר; אם ההחלטה היא להעביר — לכתוב מה בראיון יצר את הביטחון שיש פוטנציאל התאמה אמיתי.
+- היזהר מניסוח קטגורי כמו "אינו מתועד" או "לא קיים אצלו" — נסח כהיסק זהיר מהמידע הזמין: "ממה שעלה בראיון לא נראה ש...", "לא ברור מהראיון ש...".
+- המייל ממוקד רק בשאלה אם להעביר ללקוח או לא, ומה בהתאם לדרישות המשרה ולמה שעלה בראיון. אל תמליץ על תפקידים אחרים או כיוונים חלופיים.
+- שורה תחתונה חד-משמעית: להעביר ללקוח / לא להעביר.
 - אם נדרשים תיקוני קורות חיים: כתוב ישירות בסוף מה לשנות ומה לכתוב במקום.
 - אסור: לשיקולכם, כדאי לשקול.
 - גנדר: התאם לגנדר המועמד.
@@ -97,26 +174,19 @@ export const POST_INTERVIEW_EVALUATION_INSTRUCTIONS = `
 למידה מבוקרת: הצע כלל רוחבי רק אם הוא כללי ועצמאי.
 `;
 
-export const evaluationSchema = {
+export const postEvaluationSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["gate_status","score","fit_label","recommendation","bottom_line","executive_summary","strengths","gaps","uncertainties","questions","technology_fit","experience_fit","risks","cv_changes_needed","cv_change_recommendations","generalizable_feedback","proposed_engine_rule","recruitment_email"],
+  required: ["decision","score","bottom_line","executive_summary","strengths","gaps","uncertainties","cv_changes_needed","generalizable_feedback","proposed_engine_rule","recruitment_email"],
   properties: {
-    gate_status: { type: "string", enum: ["עבר את שער ההתאמה","לא רלוונטי לתפקיד"] },
+    decision: { type: "string", enum: ["להעביר ללקוח","לא להעביר ללקוח"] },
     score: { type: "integer" },
-    fit_label: { type: "string", enum: ["מתאים","מתאים חלקית","גבולי","לא מתאים","לא רלוונטי לתפקיד"] },
-    recommendation: { type: "string", enum: ["להתקדם לראיון מקצועי","להתקדם בכפוף לבירור","לא להתקדם","להעביר ללקוח","להעביר ללקוח בכפוף להשלמה","לא להעביר ללקוח"] },
     bottom_line: { type: "string" },
     executive_summary: { type: "string" },
-    strengths: { type: "array", items: { type: "object", additionalProperties: false, required: ["requirement","evidence","assessment"], properties: { requirement:{type:"string"}, evidence:{type:"string"}, assessment:{type:"string",enum:["מתאים","מתאים חלקית"]} } } },
-    gaps: { type: "array", items: { type: "object", additionalProperties: false, required: ["requirement","candidate_has","missing","criticality","completion_likelihood"], properties: { requirement:{type:"string"}, candidate_has:{type:"string"}, missing:{type:"string"}, criticality:{type:"string",enum:["נמוכה","בינונית","גבוהה","פוסל"]}, completion_likelihood:{type:"string"} } } },
+    strengths: { type: "array", items: { type: "object", additionalProperties: false, required: ["requirement","evidence"], properties: { requirement:{type:"string"}, evidence:{type:"string"} } } },
+    gaps: { type: "array", items: { type: "object", additionalProperties: false, required: ["gap","criticality","completion_likelihood"], properties: { gap:{type:"string"}, criticality:{type:"string",enum:["נמוכה","בינונית","גבוהה","פוסל"]}, completion_likelihood:{type:"string"} } } },
     uncertainties: { type: "array", items: { type: "string" } },
-    questions: { type: "array", items: { type: "object", additionalProperties: false, required: ["question","why","good_answer","red_flag","interviewer_explanation"], properties: { question:{type:"string"}, why:{type:"string"}, good_answer:{type:"string"}, red_flag:{type:"string"}, interviewer_explanation:{type:"string"} } } },
-    technology_fit: { type: "string" },
-    experience_fit: { type: "string" },
-    risks: { type: "array", items: { type: "string" } },
     cv_changes_needed: { type: "boolean" },
-    cv_change_recommendations: { type: "array", items: { type: "object", additionalProperties: false, required: ["location","change","reason","evidence"], properties: { location:{type:"string"}, change:{type:"string"}, reason:{type:"string"}, evidence:{type:"string"} } } },
     generalizable_feedback: { type: "boolean" },
     proposed_engine_rule: { type: "string" },
     recruitment_email: { type: "string" }

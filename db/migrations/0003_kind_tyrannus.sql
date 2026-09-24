@@ -1,0 +1,1 @@
+ALTER TABLE "applications" ADD COLUMN "proposed_engine_rule_key" text DEFAULT '' NOT NULL;

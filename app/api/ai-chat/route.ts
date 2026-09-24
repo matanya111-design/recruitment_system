@@ -1,7 +1,9 @@
 import { requireAppIdentity } from "@/lib/auth/identity";
-import { generateStructured, estimateCost } from "@/lib/ai/provider";
+import { generateStructured, estimateCost, isAiConfigured } from "@/lib/ai/provider";
+import { EMAIL_CHAT_INSTRUCTIONS } from "@/lib/ai/prompts";
+import { getPrompt } from "@/lib/ai/get-prompt";
 import { getDb } from "@/db/client";
-import { aiActivityLogs, applications, candidates, jobs, aiInstructions } from "@/db/schema";
+import { aiActivityLogs, applications, candidates, jobs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
@@ -23,7 +25,7 @@ export async function POST(request: Request) {
       evalType?: string;
     };
 
-    if (!process.env.OPENAI_API_KEY)
+    if (!isAiConfigured())
       return Response.json({ error: "מנוע ה-AI טרם הוגדר" }, { status: 503 });
 
     const db = getDb();
@@ -34,7 +36,7 @@ export async function POST(request: Request) {
     `);
     const row = (rows as unknown as { rows: Array<Record<string, unknown>> }).rows[0];
 
-    const instructions = `אתה עוזר לניסוח מיילים לצוות גיוס ב-NAYA. יש לך הקשר על מועמד ומשרה. המשתמש מבקש לשפר או לשנות את מייל הגיוס. הפק מייל מעודכן בלבד — ללא כותרות, ללא פרקים, רק פסקאות קצרות טבעיות. ענה אך ורק עם שדה reply שמכיל את המייל המעודכן. גנדר ברירת מחדל — זכר.`;
+    const instructions = await getPrompt("email_chat", EMAIL_CHAT_INSTRUCTIONS);
 
     const historyText = messages.map(m => `${m.role === "user" ? "בקשה" : "מייל נוכחי"}: ${m.text}`).join("\n\n");
     const input = `מועמד: ${row?.full_name ?? "לא ידוע"} | משרה: ${row?.title ?? ""} ב-${row?.client ?? ""} | שלב: ${evalType ?? "ראשוני"}\n\n${historyText}`;

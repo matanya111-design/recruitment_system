@@ -3,23 +3,14 @@ import { requireAppIdentity, requireAdmin } from "@/lib/auth/identity";
 import { writeAudit } from "@/lib/audit";
 import { bootstrap } from "@/lib/auth/bootstrap";
 import { sql, eq, and } from "drizzle-orm";
-import { jobs, candidates, applications, aiActivityLogs, aiInstructions, appUsers, evaluationRules } from "@/db/schema";
-import { EVALUATION_INSTRUCTIONS, POST_INTERVIEW_EVALUATION_INSTRUCTIONS } from "@/lib/ai/evaluation-prompt";
-import { JOB_PARSING_INSTRUCTIONS, CV_EXTRACTION_INSTRUCTIONS, INTERVIEW_SUMMARY_INSTRUCTIONS } from "@/lib/ai/prompts";
-import { TEAM_MEETING_SUMMARY_INSTRUCTIONS, TEAM_JOB_MATCH_INSTRUCTIONS, TEAM_MEMBER_ANALYSIS_INSTRUCTIONS, TEAM_EXTRACT_PROFILE_INSTRUCTIONS } from "@/lib/ai/team-prompts";
+import { jobs, candidates, applications, aiActivityLogs, aiInstructions, appUsers } from "@/db/schema";
+import { PROMPT_DEFAULTS } from "@/lib/ai/prompt-defaults";
+import { instructionDefinitions } from "@/lib/ai/instructions";
 import { deleteObject } from "@/lib/storage/client";
 
-const DEFAULTS: Record<string, string> = {
-  candidate_evaluation: EVALUATION_INSTRUCTIONS,
-  post_interview_evaluation: POST_INTERVIEW_EVALUATION_INSTRUCTIONS,
-  job_parsing: JOB_PARSING_INSTRUCTIONS,
-  cv_extraction: CV_EXTRACTION_INSTRUCTIONS,
-  interview_summary: INTERVIEW_SUMMARY_INSTRUCTIONS,
-  team_meeting_summary: TEAM_MEETING_SUMMARY_INSTRUCTIONS,
-  team_job_match: TEAM_JOB_MATCH_INSTRUCTIONS,
-  team_member_analysis: TEAM_MEMBER_ANALYSIS_INSTRUCTIONS,
-  team_extract_profile: TEAM_EXTRACT_PROFILE_INSTRUCTIONS,
-};
+const DEFAULTS = PROMPT_DEFAULTS;
+const TRIGGER_BY_KEY: Record<string, string> = Object.fromEntries(instructionDefinitions.map((d) => [d.key, d.trigger]));
+const GROUP_BY_KEY: Record<string, string> = Object.fromEntries(instructionDefinitions.map((d) => [d.key, d.group]));
 
 async function seedIfEmpty() {
   const db = getDb();
@@ -100,13 +91,13 @@ export async function GET(request: Request) {
 
     const jobRows = toRows(await db.execute(sql`
       SELECT j.*, COUNT(CASE WHEN a.archived=false THEN 1 END)::int candidates_count,
-        SUM(CASE WHEN a.score >= 75 AND a.recommendation IN ('מתאים','מתאימה','מתאים מאוד','מתאימה מאוד') AND a.archived=false THEN 1 ELSE 0 END)::int high_fit_count,
-        SUM(CASE WHEN a.score BETWEEN 60 AND 74 AND a.recommendation NOT IN ('לא מתאים','לא מתאימה','לא רלוונטי לתפקיד') AND a.archived=false THEN 1 ELSE 0 END)::int reasonable_fit_count
+        SUM(CASE WHEN a.recommendation IN ('מתאים','מתאימה','מתאים מאוד','מתאימה מאוד','לזמן לראיון פנימי','להעביר ללקוח') AND a.archived=false THEN 1 ELSE 0 END)::int high_fit_count,
+        SUM(CASE WHEN (a.recommendation = 'בירור קצר לפני ראיון' OR (a.score BETWEEN 60 AND 74 AND a.recommendation NOT IN ('לא מתאים','לא מתאימה','לא רלוונטי לתפקיד','לא לקדם למשרה זו','לא להעביר ללקוח'))) AND a.archived=false THEN 1 ELSE 0 END)::int reasonable_fit_count
       FROM jobs j LEFT JOIN applications a ON a.job_id=j.id WHERE j.archived=false GROUP BY j.id ORDER BY j.updated_at DESC
     `));
 
     const candidateRows = toRows(await db.execute(sql`
-      SELECT c.*,c.created_at candidate_created_at,a.updated_at application_updated_at,a.id application_id,a.job_id,a.status,a.interview_date,a.interview_summary,a.next_action,a.next_action_date,a.score,a.recommendation,a.evaluation_type,a.evaluation_date,a.evaluation_json,a.evaluation_feedback,a.proposed_engine_rule,a.engine_rule_status,LENGTH(COALESCE(c.cv_extracted_text,''))::int cv_text_length,j.title role,j.client
+      SELECT c.*,c.created_at candidate_created_at,a.updated_at application_updated_at,a.id application_id,a.job_id,a.status,a.interview_date,a.interview_summary,a.interview_raw_material,a.next_action,a.next_action_date,a.score,a.recommendation,a.evaluation_type,a.evaluation_date,a.evaluation_json,a.pre_evaluation_json,a.pre_evaluation_date,a.post_evaluation_json,a.post_evaluation_date,a.evaluation_feedback,a.proposed_engine_rule,a.proposed_engine_rule_key,a.engine_rule_status,LENGTH(COALESCE(c.cv_extracted_text,''))::int cv_text_length,j.title role,j.client
       FROM candidates c JOIN applications a ON a.candidate_id=c.id JOIN jobs j ON j.id=a.job_id
       WHERE c.archived=false AND a.archived=false AND j.archived=false ORDER BY a.updated_at DESC
     `));
@@ -118,11 +109,13 @@ export async function GET(request: Request) {
       WHERE a.archived=true AND c.archived=false AND j.archived=false ORDER BY a.updated_at DESC
     `));
 
-    const aiActivityRows = await db.select().from(aiActivityLogs).orderBy(sql`created_at DESC`).limit(100);
+    const aiActivityRows = await db.select().from(aiActivityLogs).orderBy(sql`created_at DESC`);
 
     const isAdmin = identity.role === "admin";
     const aiInstructionRows = isAdmin
-      ? toRows(await db.execute(sql`SELECT key,title,description,content,is_custom,updated_at FROM ai_instructions ORDER BY CASE key WHEN 'candidate_evaluation' THEN 1 WHEN 'post_interview_evaluation' THEN 2 WHEN 'interview_summary' THEN 3 WHEN 'job_parsing' THEN 4 ELSE 5 END`))
+      ? toRows(await db.execute(sql`SELECT key,title,description,content,is_custom,updated_at FROM ai_instructions`))
+          .filter((row) => String(row.key) in TRIGGER_BY_KEY) // hide rows for prompts retired from instructionDefinitions (e.g. merged into another key)
+          .map((row) => ({ ...row, trigger: TRIGGER_BY_KEY[String(row.key)] ?? "", group: GROUP_BY_KEY[String(row.key)] ?? "" }))
       : [];
     const appUserRows = isAdmin
       ? toRows(await db.execute(sql`SELECT email,role,created_at,updated_at FROM app_users ORDER BY CASE role WHEN 'admin' THEN 1 ELSE 2 END,email`))
@@ -199,6 +192,9 @@ export async function POST(request: Request) {
       const [app] = await db.insert(applications).values({
         candidateId, jobId, status: "חדש", nextAction: "בדיקת קורות חיים",
       }).returning({ id: applications.id });
+      // Linking an archived candidate to a new job implies they're active again — otherwise the
+      // new application would be invisible everywhere (lists filter on candidates.archived=false).
+      await db.update(candidates).set({ archived: false, updatedAt: new Date() }).where(eq(candidates.id, candidateId));
       return Response.json({ applicationId: app.id }, { status: 201 });
     }
 
@@ -231,10 +227,17 @@ export async function PATCH(request: Request) {
 
     if (body.entity === "application") {
       if (body.engineRuleDecision === "approve" || body.engineRuleDecision === "reject") {
-        const [app] = await db.select({ proposedEngineRule: applications.proposedEngineRule }).from(applications).where(eq(applications.id, id));
+        const [app] = await db.select({ proposedEngineRule: applications.proposedEngineRule, proposedEngineRuleKey: applications.proposedEngineRuleKey }).from(applications).where(eq(applications.id, id));
         if (!app?.proposedEngineRule) return Response.json({ error: "לא נמצאה הצעה רוחבית" }, { status: 404 });
         if (body.engineRuleDecision === "approve") {
-          await db.insert(evaluationRules).values({ ruleText: app.proposedEngineRule, sourceApplicationId: id }).onConflictDoNothing();
+          // Approving appends the learned rule directly to the specific prompt that produced it,
+          // so the change is visible and editable right there in "הוראות AI" — not a separate,
+          // invisible list applied behind the scenes.
+          const targetKey = app.proposedEngineRuleKey || "candidate_evaluation";
+          const [inst] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, targetKey));
+          const baseContent = inst?.content ?? DEFAULTS[targetKey] ?? "";
+          const updatedContent = `${baseContent}\n\nכלל שנלמד ואושר בעקבות משוב מקצועי:\n${app.proposedEngineRule}`;
+          await db.update(aiInstructions).set({ content: updatedContent, isCustom: true, updatedAt: new Date() }).where(eq(aiInstructions.key, targetKey));
         }
         await db.update(applications).set({ engineRuleStatus: body.engineRuleDecision === "approve" ? "אושר ככלל קבוע" : "נדחה", updatedAt: new Date() }).where(eq(applications.id, id));
         await writeAudit({ actorEmail: identity.email, action: `engine_rule_${body.engineRuleDecision}`, entityType: "application", entityId: id });
@@ -244,6 +247,7 @@ export async function PATCH(request: Request) {
       const updates: Record<string, unknown> = { updatedAt: new Date() };
       const strFields: [string, keyof typeof applications.$inferInsert][] = [
         ["status", "status"], ["interviewSummary", "interviewSummary"],
+        ["interviewRawMaterial", "interviewRawMaterial"],
         ["nextAction", "nextAction"], ["nextActionDate", "nextActionDate"],
         ["evaluationFeedback", "evaluationFeedback"],
       ];
@@ -253,6 +257,12 @@ export async function PATCH(request: Request) {
       if (Object.keys(updates).length > 1) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await db.update(applications).set(updates as any).where(eq(applications.id, id));
+      }
+      // Restoring an archived application implies the candidate is active again too — otherwise
+      // list views that filter on candidates.archived=false would still hide it.
+      if (body.archived === 0 || body.archived === false) {
+        const [app] = await db.select({ candidateId: applications.candidateId }).from(applications).where(eq(applications.id, id));
+        if (app) await db.update(candidates).set({ archived: false, updatedAt: new Date() }).where(eq(candidates.id, app.candidateId));
       }
       return Response.json({ ok: true });
     }

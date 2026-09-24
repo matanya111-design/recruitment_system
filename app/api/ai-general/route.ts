@@ -1,5 +1,7 @@
 import { requireAppIdentity } from "@/lib/auth/identity";
-import { generateStructured, estimateCost } from "@/lib/ai/provider";
+import { generateStructured, estimateCost, isAiConfigured } from "@/lib/ai/provider";
+import { GENERAL_AI_INSTRUCTIONS } from "@/lib/ai/prompts";
+import { getPrompt } from "@/lib/ai/get-prompt";
 import { getDb } from "@/db/client";
 import { aiActivityLogs } from "@/db/schema";
 import { sql } from "drizzle-orm";
@@ -24,7 +26,7 @@ export async function POST(request: Request) {
       teamMemberId?: number;
     };
 
-    if (!process.env.OPENAI_API_KEY)
+    if (!isAiConfigured())
       return Response.json({ error: "מנוע ה-AI טרם הוגדר" }, { status: 503 });
 
     const db = getDb();
@@ -48,7 +50,7 @@ export async function POST(request: Request) {
       instructions = `אתה עוזר לחיפוש משרות מתאימות לחבר צוות. בהינתן פרופיל ורשימת משרות פעילות, זהה התאמות ופרט בעברית טבעית. הצג עד 3 משרות מתאימות ביותר עם הסבר קצר לכל אחת. אם אין התאמות טובות, אמור זאת ישירות.`;
       input = `חבר צוות: ${member.name}\nסיכום: ${member.notes || "לא הוזן"}\n\nמשרות פעילות:\n${jobsData.map(j=>`- ${j.title} ב-${j.client} | טכנולוגיות: ${j.technologies}`).join("\n")}`;
     } else {
-      instructions = body.systemPrompt || `אתה עוזר AI של NAYA — חברת גיוס טכנולוגי. יש לך גישה לנתוני המערכת. ענה בעברית טבעית, תמציתית ומקצועית על שאלות המשתמש.`;
+      instructions = body.systemPrompt || await getPrompt("general_ai", GENERAL_AI_INSTRUCTIONS);
       const context = `נתוני מערכת:\n\nמשרות פעילות (${jobsData.length}):\n${jobsData.map(j=>`- ${j.title} ב-${j.client} (${j.status})`).join("\n")}\n\nמועמדים אחרונים (${candsData.length}):\n${candsData.map(c=>`- ${c.full_name} ← ${c.role} | ציון ${c.score??"-"} | ${c.status} | פעולה: ${c.next_action||"לא הוגדרה"}`).join("\n")}`;
       input = `${context}\n\nשאלת המשתמש: ${body.query}`;
     }

@@ -1,6 +1,8 @@
 import { getDb } from "@/db/client";
 import { requireAppIdentity } from "@/lib/auth/identity";
-import { generateStructured, estimateCost } from "@/lib/ai/provider";
+import { generateStructured, estimateCost, isAiConfigured } from "@/lib/ai/provider";
+import { JOB_REFINE_INSTRUCTIONS } from "@/lib/ai/prompts";
+import { getPrompt } from "@/lib/ai/get-prompt";
 import { aiActivityLogs } from "@/db/schema";
 
 const refinementSchema = {
@@ -19,15 +21,6 @@ const refinementSchema = {
   },
 } as const;
 
-const refineInstructions = `אתה מסייע למנהל גיוס לעדכן משרה קיימת לפי מידע חדש, כגון תמלול שיחה עם מנהל מגייס.
-- השווה בין המשרה הקיימת למידע החדש והחזר דוח שינויים קצר וברור בעברית.
-- אין להמציא מידע ואין למחוק דרישה קיימת אלא אם המידע החדש אומר במפורש שאינה נדרשת.
-- אם קיימת סתירה או אי-ודאות, השאר את הערך הקיים והוסף שאלה ל-questions.
-- הבחן בין חובה, יתרון, דגש מקצועי, דגש אישיותי והערה פנימית.
-- draft חייב להיות גרסה מלאה של המשרה לאחר השינויים, כולל שדות שלא השתנו.
-- changes יכיל רק שינויים ממשיים. field יהיה שם שדה ידידותי, action יתאר בקצרה מה ישתנה, reason יסביר על סמך מה.
-- אם אין שינוי מוצדק, החזר changes ריק ואל תשנה את draft.`;
-
 export async function POST(request: Request) {
   const identity = await requireAppIdentity();
   if (identity instanceof Response) return identity;
@@ -37,11 +30,11 @@ export async function POST(request: Request) {
     if (source.length < 20) return Response.json({ error: "יש להדביק מידע משמעותי לעדכון המשרה" }, { status: 400 });
     if (source.length > 120000) return Response.json({ error: "הטקסט ארוך מדי" }, { status: 413 });
     if (!body.job) return Response.json({ error: "פרטי המשרה הקיימת חסרים" }, { status: 400 });
-    if (!process.env.OPENAI_API_KEY) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
+    if (!isAiConfigured()) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
     const result = await generateStructured<Record<string, unknown>>({
       operation: "job_refine",
-      instructions: refineInstructions,
+      instructions: await getPrompt("job_refine", JOB_REFINE_INSTRUCTIONS),
       input: `המשרה הקיימת:\n${JSON.stringify(body.job, null, 2)}\n\nהמידע החדש:\n${source}`,
       schemaName: "job_refinement",
       jsonSchema: refinementSchema,

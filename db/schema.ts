@@ -72,6 +72,7 @@ export const applications = pgTable(
     status: text("status").notNull().default("חדש"),
     interviewDate: timestamp("interview_date", { withTimezone: true }),
     interviewSummary: text("interview_summary").notNull().default(""),
+    interviewRawMaterial: text("interview_raw_material").notNull().default(""),
     nextAction: text("next_action").notNull().default(""),
     nextActionDate: date("next_action_date"),
     score: integer("score"),
@@ -79,8 +80,22 @@ export const applications = pgTable(
     evaluationType: text("evaluation_type").notNull().default("ראשונית"),
     evaluationDate: timestamp("evaluation_date", { withTimezone: true }),
     evaluationJson: jsonb("evaluation_json"),
+    // Pre/post are stored independently so running one never overwrites the other. The columns
+    // above (score/recommendation/evaluationType/evaluationDate/evaluationJson) track whichever
+    // ran most recently, for dashboard/list views that need one "current status" per application.
+    preEvaluationJson: jsonb("pre_evaluation_json"),
+    preScore: integer("pre_score"),
+    preRecommendation: text("pre_recommendation").notNull().default(""),
+    preEvaluationDate: timestamp("pre_evaluation_date", { withTimezone: true }),
+    postEvaluationJson: jsonb("post_evaluation_json"),
+    postScore: integer("post_score"),
+    postRecommendation: text("post_recommendation").notNull().default(""),
+    postEvaluationDate: timestamp("post_evaluation_date", { withTimezone: true }),
     evaluationFeedback: text("evaluation_feedback").notNull().default(""),
     proposedEngineRule: text("proposed_engine_rule").notNull().default(""),
+    // Which ai_instructions key the proposed rule should be appended to on approval — the prompt
+    // that actually produced the proposal (candidate_evaluation or post_interview_evaluation).
+    proposedEngineRuleKey: text("proposed_engine_rule_key").notNull().default(""),
     engineRuleStatus: text("engine_rule_status").notNull().default("ללא הצעה"),
     archived: boolean("archived").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

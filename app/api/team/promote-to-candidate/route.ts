@@ -1,6 +1,8 @@
 import { getDb } from "@/db/client";
 import { requireAppIdentity } from "@/lib/auth/identity";
-import { generateStructured, estimateCost } from "@/lib/ai/provider";
+import { generateStructured, estimateCost, isAiConfigured } from "@/lib/ai/provider";
+import { TEAM_PROMOTE_INSTRUCTIONS } from "@/lib/ai/team-prompts";
+import { getPrompt } from "@/lib/ai/get-prompt";
 import { aiActivityLogs, candidates, applications } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
@@ -35,7 +37,7 @@ export async function POST(request: Request) {
   const { memberId, jobIds } = (await request.json()) as { memberId?: number; jobIds?: number[] };
   if (!memberId) return Response.json({ error: "חסר מזהה עובד" }, { status: 400 });
   if (!jobIds?.length) return Response.json({ error: "יש לבחור לפחות משרה אחת" }, { status: 400 });
-  if (!process.env.OPENAI_API_KEY) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
+  if (!isAiConfigured()) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
   const db = getDb();
 
@@ -54,14 +56,7 @@ export async function POST(request: Request) {
     : "אין פגישות מתועדות.";
 
   // AI: build structured candidate profile from member knowledge
-  const instructions = `אתה מסייע לבנות כרטיס מועמד מתוך מידע על עובד קיים בצוות.
-חלץ פרטים מקצועיים מהפרופיל ומסיכומי הפגישות.
-- professionalTitle: התפקיד הנוכחי של העובד.
-- company: "עובד פנימי" (אם לא צוין אחרת).
-- yearsExperience: שנות ניסיון רלוונטיות — הסק לפי המידע הזמין.
-- technologies: טכנולוגיות שמוזכרות בפועל.
-- experienceSummary: תקציר קצר ומקצועי בעברית בגוף שלישי — מה העובד עושה, מה הוא טוב בו.
-- recruiterOpinion: חוות דעת המגייס — מה מרשים, מה לבדוק, למה מתאים להגשה. כתוב בגוף ראשון בעברית.`;
+  const instructions = await getPrompt("team_promote", TEAM_PROMOTE_INSTRUCTIONS);
 
   const input = `שם: ${member.name}\n\nפרופיל:\n${member.notes || "לא הוזן"}\n\nסיכומי פגישות:\n${meetingSummaries}`;
 

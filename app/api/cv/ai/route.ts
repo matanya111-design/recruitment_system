@@ -1,6 +1,6 @@
 import { getDb } from "@/db/client";
 import { requireAppIdentity } from "@/lib/auth/identity";
-import { generateStructured, estimateCost } from "@/lib/ai/provider";
+import { generateStructured, estimateCost, isAiConfigured } from "@/lib/ai/provider";
 import { CV_EXTRACTION_INSTRUCTIONS } from "@/lib/ai/prompts";
 import { aiActivityLogs, candidates, applications, aiInstructions } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   try {
     const { candidateId } = (await request.json()) as { candidateId?: number };
     if (!candidateId) return Response.json({ error: "חסר מזהה מועמד" }, { status: 400 });
-    if (!process.env.OPENAI_API_KEY) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
+    if (!isAiConfigured()) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
     const db = getDb();
     const [cand] = await db.select().from(candidates)
