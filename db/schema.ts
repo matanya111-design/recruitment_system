@@ -32,6 +32,10 @@ export const jobs = pgTable("jobs", {
   minYears: integer("min_years"),
   professionalEmphasis: text("professional_emphasis").notNull().default(""),
   personalityEmphasis: text("personality_emphasis").notNull().default(""),
+  // Explicit priorities stated by the client-side hiring manager — kept separate from the general
+  // professional/personality emphasis because these carry extra weight in candidate evaluation,
+  // treated almost like additional must-have requirements (see evaluation prompts).
+  hiringManagerEmphasis: text("hiring_manager_emphasis").notNull().default(""),
   internalNotes: text("internal_notes").notNull().default(""),
   archived: boolean("archived").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -91,6 +95,15 @@ export const applications = pgTable(
     postScore: integer("post_score"),
     postRecommendation: text("post_recommendation").notNull().default(""),
     postEvaluationDate: timestamp("post_evaluation_date", { withTimezone: true }),
+    // The AI only compares requirements to the candidate and gives an advisory recommendation — it
+    // never decides. These hold the recruiter's own binding decision + reasoning, entered separately
+    // per stage; the recruitment email is drafted only after this is saved, from this reasoning alone.
+    preHumanDecision: text("pre_human_decision").notNull().default(""),
+    preHumanDecisionReason: text("pre_human_decision_reason").notNull().default(""),
+    preHumanDecisionDate: timestamp("pre_human_decision_date", { withTimezone: true }),
+    postHumanDecision: text("post_human_decision").notNull().default(""),
+    postHumanDecisionReason: text("post_human_decision_reason").notNull().default(""),
+    postHumanDecisionDate: timestamp("post_human_decision_date", { withTimezone: true }),
     evaluationFeedback: text("evaluation_feedback").notNull().default(""),
     proposedEngineRule: text("proposed_engine_rule").notNull().default(""),
     // Which ai_instructions key the proposed rule should be appended to on approval — the prompt

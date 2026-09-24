@@ -1,0 +1,1 @@
+ALTER TABLE "jobs" ADD COLUMN "hiring_manager_emphasis" text DEFAULT '' NOT NULL;

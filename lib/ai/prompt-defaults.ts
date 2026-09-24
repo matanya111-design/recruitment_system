@@ -2,6 +2,8 @@ import { EVALUATION_INSTRUCTIONS, POST_INTERVIEW_EVALUATION_INSTRUCTIONS, CANDID
 import { JOB_PARSING_INSTRUCTIONS, CV_EXTRACTION_INSTRUCTIONS, INTERVIEW_SUMMARY_INSTRUCTIONS, EMAIL_CHAT_INSTRUCTIONS, GENERAL_AI_INSTRUCTIONS, JOB_REFINE_INSTRUCTIONS } from "@/lib/ai/prompts";
 import { TEAM_MEETING_SUMMARY_INSTRUCTIONS, TEAM_INSIGHT_INSTRUCTIONS, TEAM_EXTRACT_PROFILE_INSTRUCTIONS, TEAM_PROMOTE_INSTRUCTIONS } from "@/lib/ai/team-prompts";
 import { RULE_MERGE_INSTRUCTIONS } from "@/lib/ai/rule-merge-prompt";
+import { PRE_RECRUITMENT_EMAIL_INSTRUCTIONS, POST_RECRUITMENT_EMAIL_INSTRUCTIONS } from "@/lib/ai/recruitment-email-prompt";
+import { DISAGREEMENT_INSIGHT_INSTRUCTIONS } from "@/lib/ai/disagreement-insight-prompt";
 
 // Single source of truth for "what is the default text of each editable prompt" — keyed exactly
 // like instructionDefinitions in lib/ai/instructions.ts. Both the DB seeding (lib/auth/bootstrap.ts)
@@ -21,6 +23,9 @@ export const PROMPT_DEFAULTS: Record<string, string> = {
   evaluation_chat: EVALUATION_CHAT_INSTRUCTIONS,
   email_chat: EMAIL_CHAT_INSTRUCTIONS,
   engine_rule_merge: RULE_MERGE_INSTRUCTIONS,
+  disagreement_insight: DISAGREEMENT_INSIGHT_INSTRUCTIONS,
+  pre_recruitment_email: PRE_RECRUITMENT_EMAIL_INSTRUCTIONS,
+  post_recruitment_email: POST_RECRUITMENT_EMAIL_INSTRUCTIONS,
   general_ai: GENERAL_AI_INSTRUCTIONS,
   job_refine: JOB_REFINE_INSTRUCTIONS,
   team_promote: TEAM_PROMOTE_INSTRUCTIONS,

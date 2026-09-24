@@ -8,10 +8,14 @@ import { TEAM_EXTRACT_PROFILE_INSTRUCTIONS } from "@/lib/ai/team-prompts";
 const schema = {
   type: "object",
   additionalProperties: false,
-  required: ["name", "notes"],
+  required: ["name", "notes", "role", "client", "nayaStartDate", "nextStepSummary"],
   properties: {
     name: { type: "string" },
     notes: { type: "string" },
+    role: { type: "string" },
+    client: { type: "string" },
+    nayaStartDate: { type: "string" },
+    nextStepSummary: { type: "string" },
   },
 } as const;
 
@@ -30,7 +34,7 @@ export async function POST(request: Request) {
     const [savedInst] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, "team_extract_profile")).catch(() => []);
     const instructions = savedInst?.content ?? TEAM_EXTRACT_PROFILE_INSTRUCTIONS;
 
-    const result = await generateStructured<{ name: string; notes: string }>({
+    const result = await generateStructured<{ name: string; notes: string; role: string; client: string; nayaStartDate: string; nextStepSummary: string }>({
       operation: "team_extract_profile",
       instructions,
       input: `${nameHint ? `רמז לשם: ${nameHint}\n\n` : ""}טקסט גולמי:\n${text}`,
@@ -51,7 +55,14 @@ export async function POST(request: Request) {
       estimatedCostUsd: String(cost),
     });
 
-    return Response.json({ name: result.data.name, notes: result.data.notes });
+    return Response.json({
+      name: result.data.name,
+      notes: result.data.notes,
+      role: result.data.role,
+      client: result.data.client,
+      nayaStartDate: result.data.nayaStartDate,
+      nextStepSummary: result.data.nextStepSummary,
+    });
   } catch (err) {
     console.error("extract-profile error:", err);
     return Response.json({ error: err instanceof Error ? err.message : "שגיאה" }, { status: 500 });

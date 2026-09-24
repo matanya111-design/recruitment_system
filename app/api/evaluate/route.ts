@@ -3,22 +3,12 @@ import { requireAppIdentity } from "@/lib/auth/identity";
 import { generateStructuredStream, estimateCost, isAiConfigured } from "@/lib/ai/provider";
 import { EVALUATION_INSTRUCTIONS, POST_INTERVIEW_EVALUATION_INSTRUCTIONS, preEvaluationSchema, postEvaluationSchema } from "@/lib/ai/evaluation-prompt";
 import { aiActivityLogs, applications, candidates, jobs, aiInstructions } from "@/db/schema";
-import { eq, and, eq as eqAlias } from "drizzle-orm";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 // Streamed as newline-delimited JSON: {"type":"delta","text":...} while the AI writes,
 // then a single {"type":"done",...} or {"type":"error",...} to close.
 function ndjson(obj: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(obj) + "\n");
-}
-
-// The pre-interview prompt deliberately has no numeric score (it decides between 3 categories,
-// not a 0-100 fit percentage) — this maps the decision to a coded score so existing score-based
-// UI (the fit ring, job-list high/reasonable-fit counts) keeps working without change.
-function scoreForDecision(decision: string): number {
-  if (decision === "לזמן לראיון פנימי") return 80;
-  if (decision === "בירור קצר לפני ראיון") return 55;
-  return 25;
 }
 
 export async function POST(request: Request) {
@@ -31,15 +21,21 @@ export async function POST(request: Request) {
 
     const db = getDb();
     const rows = await db.execute(sql`
-      SELECT a.id,a.status,a.interview_summary,a.pre_evaluation_json,
+      SELECT a.id,a.status,a.interview_summary,a.pre_evaluation_json,a.pre_human_decision,a.pre_human_decision_reason,
+             a.recommendation,a.pre_recommendation,a.post_recommendation,
              c.cv_extracted_text,c.full_name,c.professional_title,c.company,c.years_experience,c.technologies,c.experience_summary,c.recruiter_opinion,
-             j.title,j.client,j.description,j.must_requirements,j.preferred_requirements,j.technologies job_technologies,j.min_years,j.professional_emphasis,j.personality_emphasis
+             j.title,j.client,j.description,j.must_requirements,j.preferred_requirements,j.technologies job_technologies,j.min_years,j.professional_emphasis,j.personality_emphasis,j.hiring_manager_emphasis
       FROM applications a JOIN candidates c ON c.id=a.candidate_id JOIN jobs j ON j.id=a.job_id
       WHERE a.id=${applicationId} AND a.archived=false AND c.archived=false AND j.archived=false
     `);
     const row = (rows as unknown as { rows: Array<Record<string, unknown>> }).rows[0];
     if (!row) return Response.json({ error: "המועמדות לא נמצאה" }, { status: 404 });
-    if (!row.cv_extracted_text) return Response.json({ error: "לא ניתן להעריך ללא טקסט שחולץ מקורות החיים" }, { status: 422 });
+    // An employee promoted to a candidate (see "קידום כמועמד") gets a full card profile — title,
+    // company, years, technologies, experience summary — but never an uploaded CV. Evaluation must
+    // still work from the card alone in that case; only block when there's neither source at all.
+    const hasCv = Boolean(row.cv_extracted_text);
+    const hasCardProfile = Boolean(String(row.experience_summary ?? "").trim());
+    if (!hasCv && !hasCardProfile) return Response.json({ error: "לא ניתן להעריך ללא קורות חיים או תקציר ניסיון בכרטיס המועמד" }, { status: 422 });
 
     // Which evaluation to run is decided by the tab/button the user explicitly chose (mode), not by
     // whether interview text happens to exist — an application can carry reused interview material
@@ -57,20 +53,27 @@ export async function POST(request: Request) {
     const [savedInst] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, instructionKey));
     const baseInstructions = savedInst?.content ?? (isPost ? POST_INTERVIEW_EVALUATION_INSTRUCTIONS : EVALUATION_INSTRUCTIONS);
 
-    // Calibration context for a post-interview run: the pre-interview evaluation is read from its
-    // own dedicated column, independent of whatever ran most recently overall.
+    // Calibration context for a post-interview run: prefer the recruiter's actual pre-interview
+    // decision (more authoritative) over the AI's earlier advisory recommendation, if one was saved.
+    // Read from the pre-interview's own dedicated columns, independent of whatever ran most recently.
     let previousCalibration = "";
-    if (isPost && row.pre_evaluation_json) {
-      try {
-        const prev = (typeof row.pre_evaluation_json === "string" ? JSON.parse(row.pre_evaluation_json) : row.pre_evaluation_json) as Record<string, unknown>;
-        previousCalibration = `\n\nהערכה ראשונית קודמת - לכיול השינוי בלבד, אינה Evidence:\nהחלטה קודמת: ${prev.decision ?? "לא ידוע"}\nנימוק: ${prev.decision_reason ?? "לא ידוע"}\nיש להסביר שינוי באמצעות מידע חדש מסיכום הראיון.`;
-      } catch { previousCalibration = ""; }
+    if (isPost && (row.pre_human_decision || row.pre_evaluation_json)) {
+      let calibrationLine = "";
+      if (row.pre_human_decision) {
+        calibrationLine = `החלטת המגייס לפני ראיון: ${row.pre_human_decision}\nנימוק המגייס: ${row.pre_human_decision_reason || "לא צוין"}`;
+      } else if (row.pre_evaluation_json) {
+        try {
+          const prev = (typeof row.pre_evaluation_json === "string" ? JSON.parse(row.pre_evaluation_json) : row.pre_evaluation_json) as Record<string, unknown>;
+          calibrationLine = `המלצת AI לפני ראיון (מגייס טרם החליט): ${prev.ai_recommendation ?? "לא ידוע"}\nנימוק ה-AI: ${prev.ai_recommendation_reason ?? "לא ידוע"}`;
+        } catch { calibrationLine = ""; }
+      }
+      if (calibrationLine) previousCalibration = `\n\nהערכה/החלטה קודמת לפני ראיון - לכיול השינוי בלבד, אינה Evidence:\n${calibrationLine}\nיש להסביר שינוי באמצעות מידע חדש מסיכום הראיון.`;
     }
 
     // Only the post-interview prompt needs this situational framing — the pre-interview prompt is
-    // already fully self-contained about what decision it makes.
+    // already fully self-contained about the advisory recommendation it gives.
     const decisionStage = isPost
-      ? "שלב לאחר ראיון מקצועי. ההחלטה היא האם להעביר את המועמד ללקוח המגייס. במייל לגיוס חובה לכתוב שורה תחתונה חד-משמעית: להעביר ללקוח או לא להעביר ללקוח. אין לבקש מצוות הגיוס להחליט ואין להמליץ על ראיון שכבר בוצע."
+      ? "שלב לאחר ראיון מקצועי. זו המלצה בלבד לגבי העברה ללקוח - ההחלטה בפועל היא של המגייס. אין לבקש מצוות הגיוס להחליט ואין להמליץ על ראיון שכבר בוצע."
       : "";
 
     const feedback = String(reviewerFeedback ?? "").trim().slice(0, 12000);
@@ -82,7 +85,19 @@ export async function POST(request: Request) {
     // would mix in irrelevant context from an unrelated role.
     const interviewSection = isPost ? `\n\nסיכום ראיון מקצועי:\n${row.interview_summary || "טרם התקיים או לא הוזן"}` : "";
 
-    const input = `מקורות המשרה:\nשם: ${row.title}\nלקוח: ${row.client}\nתיאור: ${row.description}\nדרישות חובה: ${row.must_requirements}\nדרישות יתרון: ${row.preferred_requirements}\nטכנולוגיות: ${row.job_technologies}\nשנות ניסיון: ${row.min_years ?? "לא הוגדר"}\nדגשים מקצועיים: ${row.professional_emphasis}\nדגשים אישיותיים: ${row.personality_emphasis}\n\nמקורות המועמד:\nשם: ${row.full_name}\nתפקיד מקצועי בכרטיס: ${row.professional_title || "לא ידוע"}\nחברה: ${row.company}\nשנות ניסיון בכרטיס: ${row.years_experience ?? "לא ידוע"}\nטכנולוגיות בכרטיס: ${row.technologies}\nתקציר בכרטיס: ${row.experience_summary}\n\nחוות דעת מגייס - מקור משני ולא מאומת:\n${row.recruiter_opinion || "לא הוזנה"}\n\nקורות חיים - טקסט מלא שחולץ:\n${String(row.cv_extracted_text).slice(0, 120000)}${interviewSection}${previousCalibration}${feedbackSection}`;
+    const hiringManagerSection = row.hiring_manager_emphasis
+      ? `\n\n⚠ דגשי מנהל מגייס בצד הלקוח - עדיפות עליונה, כמעט כדרישת חובה מיוחדת (גובר על דגשים מקצועיים/אישיותיים כלליים כשיש מתח ביניהם):\n${row.hiring_manager_emphasis}`
+      : "";
+
+    // No CV happens for a candidate created via "קידום עובד למועמד" (internal employee promoted to
+    // candidate for an internal role) — there's no external CV file, only the card profile built
+    // from their internal profile/meetings. Say so explicitly so the AI treats the card as the
+    // primary source instead of reporting missing evidence as if a CV was skipped.
+    const cvSection = hasCv
+      ? `קורות חיים - טקסט מלא שחולץ:\n${String(row.cv_extracted_text).slice(0, 120000)}`
+      : `קורות חיים: לא הועלה קובץ קורות חיים למועמד/ת זו (למשל עובד/ת פנימי/ת שקודמו למועמדות דרך המערכת) — יש להתבסס על פרטי הכרטיס שלמעלה (תפקיד, חברה, ותק, טכנולוגיות, תקציר ניסיון) ועל חוות דעת המגייס כמקורות העיקריים.`;
+
+    const input = `מקורות המשרה:\nשם: ${row.title}\nלקוח: ${row.client}\nתיאור: ${row.description}\nדרישות חובה: ${row.must_requirements}\nדרישות יתרון: ${row.preferred_requirements}\nטכנולוגיות: ${row.job_technologies}\nשנות ניסיון: ${row.min_years ?? "לא הוגדר"}\nדגשים מקצועיים: ${row.professional_emphasis}\nדגשים אישיותיים: ${row.personality_emphasis}${hiringManagerSection}\n\nמקורות המועמד:\nשם: ${row.full_name}\nתפקיד מקצועי בכרטיס: ${row.professional_title || "לא ידוע"}\nחברה: ${row.company}\nשנות ניסיון בכרטיס: ${row.years_experience ?? "לא ידוע"}\nטכנולוגיות בכרטיס: ${row.technologies}\nתקציר בכרטיס: ${row.experience_summary}\n\nחוות דעת מגייס - מקור משני ולא מאומת:\n${row.recruiter_opinion || "לא הוזנה"}\n\n${cvSection}${interviewSection}${previousCalibration}${feedbackSection}`;
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -116,46 +131,38 @@ export async function POST(request: Request) {
 
           const evaluation = finalResult.data;
 
-          const score = isPost ? Number(evaluation.score) : scoreForDecision(String(evaluation.decision ?? ""));
-          const recommendationText = String(evaluation.decision ?? "");
-          const needsClarification = !isPost && evaluation.decision === "בירור קצר לפני ראיון";
+          // A fresh run invalidates whatever decision the recruiter previously made on *this same
+          // stage* — that decision was made against the AI output being replaced right now, so
+          // showing it as still "decided" would be misleading. Clear it and require a fresh decision
+          // against the new comparison. This never touches the other stage's decision.
+          const staleRecommendation = isPost ? row.post_recommendation : row.pre_recommendation;
+          const clearSharedRecommendation = Boolean(staleRecommendation) && row.recommendation === staleRecommendation;
 
-          // A malformed/incomplete AI response (e.g. a missing or non-numeric score) must not reach
-          // Postgres — writing NaN into an integer column fails with a raw driver error that would
-          // otherwise leak straight to the client.
-          if (!Number.isFinite(score)) {
-            controller.enqueue(ndjson({ type: "error", message: "ה-AI החזיר תוצאה לא תקינה (ציון חסר או שגוי). נסה להריץ את ההערכה שוב." }));
-            controller.close();
-            return;
-          }
-
+          // The AI only compares requirements to the candidate and gives an advisory recommendation
+          // — it never decides. score/recommendation ("current status") and the pre/post recommendation
+          // mirrors are populated only once the recruiter saves their own decision (see
+          // /api/evaluate/decision), never here.
           try {
             await db.update(applications).set({
-              // "Current status" columns — reflect whichever type ran most recently, used by
-              // dashboards/list views that need one status per application.
-              score,
-              recommendation: recommendationText,
               evaluationType,
               evaluationDate: new Date(),
               evaluationJson: evaluation,
               // Dedicated pre/post slots — never overwritten by the other type, so each tab always
-              // shows its own last result independently.
+              // shows its own last result independently. Re-running also resets that stage's saved
+              // decision, since it was made against the evaluation being replaced.
               ...(isPost
-                ? { postEvaluationJson: evaluation, postScore: score, postRecommendation: recommendationText, postEvaluationDate: new Date() }
-                : { preEvaluationJson: evaluation, preScore: score, preRecommendation: recommendationText, preEvaluationDate: new Date() }),
+                ? { postEvaluationJson: evaluation, postEvaluationDate: new Date(), postHumanDecision: "", postHumanDecisionReason: "", postHumanDecisionDate: null, postRecommendation: "" }
+                : { preEvaluationJson: evaluation, preEvaluationDate: new Date(), preHumanDecision: "", preHumanDecisionReason: "", preHumanDecisionDate: null, preRecommendation: "" }),
+              ...(clearSharedRecommendation ? { recommendation: "" } : {}),
               evaluationFeedback: feedback,
               proposedEngineRule: feedback && evaluation.generalizable_feedback ? String(evaluation.proposed_engine_rule ?? "") : "",
               // Records which prompt produced the proposal, so approving it can append the rule
               // directly to that specific prompt's own text instead of a separate global list.
               proposedEngineRuleKey: feedback && evaluation.generalizable_feedback && evaluation.proposed_engine_rule ? instructionKey : "",
               engineRuleStatus: feedback && evaluation.generalizable_feedback && evaluation.proposed_engine_rule ? "ממתין לאישור" : "ללא הצעה",
-              nextAction: isPost ? "קבלת החלטה ועדכון סטטוס" : "תיאום או ביצוע ראיון מקצועי",
+              nextAction: isPost ? "סקירת ההשוואה וקבלת החלטה על העברה ללקוח" : "סקירת ההשוואה וקבלת החלטה על זימון לראיון",
               updatedAt: new Date(),
             }).where(eq(applications.id, applicationId));
-
-            if (needsClarification) {
-              await db.execute(sql`UPDATE applications SET status=CASE WHEN status IN ('חדש','בבדיקה') THEN 'דורש בירור' ELSE status END WHERE id=${applicationId}`);
-            }
           } catch (dbError) {
             // Never forward a raw driver/SQL error (query text + bound params) to the client.
             console.error("Evaluate DB write failed:", dbError);

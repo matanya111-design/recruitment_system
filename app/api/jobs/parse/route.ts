@@ -8,13 +8,14 @@ import { eq } from "drizzle-orm";
 const jobDraftSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["title","client","description","mustRequirements","preferredRequirements","technologies","minYears","professionalEmphasis","personalityEmphasis","internalNotes","uncertainties"],
+  required: ["title","client","description","mustRequirements","preferredRequirements","technologies","minYears","professionalEmphasis","personalityEmphasis","hiringManagerEmphasis","internalNotes","uncertainties"],
   properties: {
     title: { type: "string" }, client: { type: "string" }, description: { type: "string" },
     mustRequirements: { type: "string" }, preferredRequirements: { type: "string" },
     technologies: { type: "array", items: { type: "string" } },
     minYears: { anyOf: [{ type: "integer" }, { type: "null" }] },
     professionalEmphasis: { type: "string" }, personalityEmphasis: { type: "string" },
+    hiringManagerEmphasis: { type: "string" },
     internalNotes: { type: "string" }, uncertainties: { type: "array", items: { type: "string" } },
   },
 } as const;

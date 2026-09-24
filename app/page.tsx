@@ -47,19 +47,21 @@ type Job = {
   preferred: string;
   emphasis: string;
   personality: string;
+  hiringManagerEmphasis: string;
   notes: string;
   minYears: number | null;
   tech: string[];
   candidates: number;
-  highFit: number;
-  reasonableFit: number;
+  fit: number;
   created: string;
   updated: string;
 };
-// Post-interview evaluation — binary client-facing decision, no gate/questions/CV-change list.
+// The AI only compares requirements to the candidate and gives an advisory recommendation — it
+// never decides. requirement_match_summary/ai_recommendation are advisory; recruitment_email only
+// exists once the recruiter's own decision has been saved (see /api/evaluate/decision).
+type RequirementMatchSummary = { matched_pct: number; partial_pct: number; unclear_pct: number; no_match_pct: number };
+// Post-interview evaluation.
 type PostEvaluationResult = {
-  decision: string;
-  score: number;
   bottom_line: string;
   executive_summary: string;
   strengths: { requirement: string; evidence: string }[];
@@ -69,20 +71,23 @@ type PostEvaluationResult = {
     completion_likelihood: string;
   }[];
   uncertainties: string[];
+  requirement_match_summary: RequirementMatchSummary;
+  ai_recommendation: string;
   cv_changes_needed: boolean;
   generalizable_feedback: boolean;
   proposed_engine_rule: string;
-  recruitment_email: string;
+  recruitment_email?: string;
 };
-// Pre-interview evaluation — categorical go/no-go decision, no numeric score from the AI.
+// Pre-interview evaluation.
 type FitTableRow = { requirement: string; evidence: string; fit_level: string; materiality: string; completable_by_naya: string };
 type InterviewQuestion = { question: string; targets: string; what_to_verify: string };
 type PreEvaluationResult = {
   core_role: string;
   fit_table: FitTableRow[];
-  decision: string;
-  decision_reason: string;
-  recruitment_email: string;
+  requirement_match_summary: RequirementMatchSummary;
+  ai_recommendation: string;
+  ai_recommendation_reason: string;
+  recruitment_email?: string;
   generalizable_feedback: boolean;
   proposed_engine_rule: string;
   interview_questions?: InterviewQuestion[];
@@ -116,8 +121,14 @@ type Candidate = {
   evaluation: PreEvaluationResult | PostEvaluationResult | null;
   preEvaluation: PreEvaluationResult | null;
   preEvaluationDate: string;
+  preHumanDecision: string;
+  preHumanDecisionReason: string;
+  preHumanDecisionDate: string;
   postEvaluation: PostEvaluationResult | null;
   postEvaluationDate: string;
+  postHumanDecision: string;
+  postHumanDecisionReason: string;
+  postHumanDecisionDate: string;
   evaluationFeedback: string;
   proposedEngineRule: string;
   proposedEngineRuleKey: string;
@@ -292,12 +303,12 @@ export default function Home() {
           preferred: j.preferred_requirements || "",
           emphasis: j.professional_emphasis,
           personality: j.personality_emphasis || "",
+          hiringManagerEmphasis: j.hiring_manager_emphasis || "",
           notes: j.internal_notes || "",
           minYears: j.min_years === null ? null : Number(j.min_years),
           tech: parseJson(j.technologies),
           candidates: Number(j.candidates_count || 0),
-          highFit: Number(j.high_fit_count || 0),
-          reasonableFit: Number(j.reasonable_fit_count || 0),
+          fit: Number(j.fit_count || 0),
           created: formatDate(j.created_at),
           updated: formatDate(j.updated_at),
         })),
@@ -332,8 +343,14 @@ export default function Home() {
           evaluation: parseEvaluation(c.evaluation_json),
           preEvaluation: parseEvaluation(c.pre_evaluation_json) as PreEvaluationResult | null,
           preEvaluationDate: c.pre_evaluation_date || "",
+          preHumanDecision: c.pre_human_decision || "",
+          preHumanDecisionReason: c.pre_human_decision_reason || "",
+          preHumanDecisionDate: c.pre_human_decision_date || "",
           postEvaluation: parseEvaluation(c.post_evaluation_json) as PostEvaluationResult | null,
           postEvaluationDate: c.post_evaluation_date || "",
+          postHumanDecision: c.post_human_decision || "",
+          postHumanDecisionReason: c.post_human_decision_reason || "",
+          postHumanDecisionDate: c.post_human_decision_date || "",
           evaluationFeedback: c.evaluation_feedback || "",
           proposedEngineRule: c.proposed_engine_rule || "",
           proposedEngineRuleKey: c.proposed_engine_rule_key || "",
@@ -750,15 +767,8 @@ function Dashboard({
   const greeting = israelHour < 5 ? "לילה טוב" : israelHour < 12 ? "בוקר טוב" : israelHour < 17 ? "צהריים טובים" : israelHour < 22 ? "ערב טוב" : "לילה טוב";
   const today = new Intl.DateTimeFormat("he-IL", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jerusalem" }).format(now);
   const active = jobs.filter((j) => j.status === "פעילה"),
-    high = candidates.filter(
-      (c) =>
-        (c.score || 0) >= 75 &&
-        ["מתאים", "מתאימה", "מתאים מאוד", "מתאימה מאוד"].includes(
-          c.recommendation,
-        ),
-    ),
-    reasonable = candidates.filter(
-      (c) => (c.score || 0) >= 60 && (c.score || 0) < 75 && !["לא מתאים", "לא מתאימה", "לא רלוונטי לתפקיד"].includes(c.recommendation),
+    fit = candidates.filter((c) =>
+      ["מתאים", "מתאימה", "מתאים מאוד", "מתאימה מאוד", "לזמן לראיון פנימי", "להעביר ללקוח"].includes(c.recommendation),
     ),
     uniqueCandidates = new Set(candidates.map((c) => c.id)).size;
   return (
@@ -783,7 +793,7 @@ function Dashboard({
           label="מועמדים"
           note={`${candidates.length} מועמדויות פעילות`}
         />
-        <article className="stat-card fit-stat"><div className="stat-icon green">✓</div><div><span>התאמת מועמדים</span><div className="fit-stat-values"><b><strong>{high.length}</strong><small>גבוהה</small></b><i /><b><strong>{reasonable.length}</strong><small>סבירה</small></b></div><em>גבוהה 75+ · סבירה 60-74</em></div></article>
+        <Stat icon="✓" tone="green" value={fit.length} label="התאמת מועמדים" note="לפי החלטות שנשמרו" />
         <Stat
           icon="!"
           tone="orange"
@@ -845,7 +855,7 @@ function Dashboard({
                   {j.client} · {j.candidates} מועמדים
                 </span>
               </div>
-              <div className="job-fit-counts"><span><b>{j.highFit}</b><small>גבוהה</small></span><span><b>{j.reasonableFit}</b><small>סבירה</small></span></div>
+              <div className="job-fit-counts"><span><b>{j.fit}</b><small>התאמה</small></span></div>
             </button>
           ))}
         </section>
@@ -906,7 +916,7 @@ function Jobs({
   addJob: () => void;
 }) {
   const [q, setQ] = useState("");
-  const [sortField, setSortField] = useState<"title"|"client"|"status"|"candidates"|"highFit"|"created"|"updated">("updated");
+  const [sortField, setSortField] = useState<"title"|"client"|"status"|"candidates"|"fit"|"created"|"updated">("updated");
   const [sortDir, setSortDir] = useState<1|-1>(-1);
   function toggleSort(f: typeof sortField) { if (sortField===f) setSortDir(d=>d===1?-1:1); else { setSortField(f); setSortDir(1); } }
   const SH = ({f,children}:{f:typeof sortField;children:React.ReactNode}) => <button className="sort-head" onClick={()=>toggleSort(f)}>{children}{sortField===f?(sortDir===1?" ↑":" ↓"):""}</button>;
@@ -942,8 +952,7 @@ function Jobs({
                 <th><SH f="client">לקוח</SH></th>
                 <th><SH f="status">סטטוס</SH></th>
                 <th><SH f="candidates">מועמדים</SH></th>
-                <th><SH f="highFit">התאמה גבוהה</SH></th>
-                <th>התאמה סבירה</th>
+                <th><SH f="fit">התאמה</SH></th>
                 <th><SH f="created">תאריך יצירה</SH></th>
                 <th><SH f="updated">עדכון</SH></th>
                 <th />
@@ -968,9 +977,8 @@ function Jobs({
                   </td>
                   <td>{j.candidates}</td>
                   <td>
-                    <b className="score-text">{j.highFit}</b>
+                    <b className="score-text">{j.fit}</b>
                   </td>
-                  <td><b className="score-text reasonable-score">{j.reasonableFit}</b></td>
                   <td>{j.created}</td>
                   <td>{j.updated}</td>
                   <td>‹</td>
@@ -1061,6 +1069,13 @@ function JobPage({
       <div className="job-detail-grid">
         <section className="panel detail-card">
           <h2>פרטי המשרה</h2>
+          {job.hiringManagerEmphasis && (
+            <div className="hiring-manager-emphasis">
+              <b>✦ דגשי מנהל מגייס — עדיפות עליונה</b>
+              <span>נאמר במפורש על ידי מנהל הגיוס בצד הלקוח. נחשב כמעט כדרישת חובה, ומקבל משקל מיוחד בבדיקת ההתאמה למשרה.</span>
+              <TextBullets text={job.hiringManagerEmphasis} />
+            </div>
+          )}
           <h3>תיאור</h3>
           <p>{job.description || "לא הוזן"}</p>
           <h3>דרישות חובה</h3>
@@ -1079,12 +1094,16 @@ function JobPage({
               <TextBullets text={job.personality} />
             </>
           )}
-          <h3>טכנולוגיות</h3>
-          <div className="tags">
-            {job.tech.map((t) => (
-              <span key={t}>{t}</span>
-            ))}
-          </div>
+          {job.tech.length > 0 && (
+            <>
+              <h3>טכנולוגיות</h3>
+              <div className="tags">
+                {job.tech.map((t) => (
+                  <span key={t}>{t}</span>
+                ))}
+              </div>
+            </>
+          )}
           {job.notes && (
             <>
               <h3>הערות פנימיות</h3>
@@ -1099,12 +1118,8 @@ function JobPage({
             <span>מועמדים</span>
           </div>
           <div>
-            <strong>{job.highFit}</strong>
-            <span>התאמה גבוהה</span>
-          </div>
-          <div>
-            <strong>{job.reasonableFit}</strong>
-            <span>התאמה סבירה</span>
+            <strong>{job.fit}</strong>
+            <span>התאמה</span>
           </div>
           <div>
             <strong>
@@ -2287,20 +2302,20 @@ function CvPanel({
 const PRE_EVAL_FIELD_STEPS: Array<[string, string]> = [
   ["core_role", "ליבת המשרה"],
   ["fit_table", "התאמה מול דרישות המשרה"],
-  ["decision", "החלטה"],
-  ["decision_reason", "נימוק ההחלטה"],
+  ["requirement_match_summary", "סיכום התאמה"],
+  ["ai_recommendation", "המלצת AI"],
+  ["ai_recommendation_reason", "נימוק ההמלצה"],
   ["proposed_engine_rule", "כלל מוצע"],
-  ["recruitment_email", "מייל גיוס"],
 ];
 const POST_EVAL_FIELD_STEPS: Array<[string, string]> = [
-  ["decision", "החלטה"],
   ["bottom_line", "שורה תחתונה"],
   ["executive_summary", "תקציר מנהלים"],
   ["strengths", "חוזקות"],
   ["gaps", "פערים"],
   ["uncertainties", "אי-ודאויות"],
+  ["requirement_match_summary", "סיכום התאמה"],
+  ["ai_recommendation", "המלצת AI"],
   ["proposed_engine_rule", "כלל מוצע"],
-  ["recruitment_email", "מייל גיוס"],
 ];
 function currentEvalStep(rawJsonSoFar: string, steps: Array<[string, string]>): string | null {
   let last: string | null = null;
@@ -2308,6 +2323,108 @@ function currentEvalStep(rawJsonSoFar: string, steps: Array<[string, string]>): 
     if (rawJsonSoFar.includes(`"${key}"`)) last = label;
   }
   return last;
+}
+// Aggregate % breakdown of the requirement comparison the AI produced — advisory context only,
+// never a pass/fail score. The recruiter reviews this alongside the row-by-row fit_table/gaps.
+function RequirementMatchBar({ summary }: { summary: RequirementMatchSummary }) {
+  const items: Array<[string, number, string]> = [
+    ["התאמה מלאה", summary.matched_pct, "var(--green)"],
+    ["התאמה חלקית", summary.partial_pct, "var(--orange)"],
+    ["לא ברור", summary.unclear_pct, "#9aa0ad"],
+    ["אין התאמה", summary.no_match_pct, "#c04f4f"],
+  ];
+  return (
+    <section className="panel content-card requirement-match-summary">
+      <h2>סיכום התאמה לדרישות הליבה</h2>
+      <div className="match-bar">
+        {items.map(([label, pct, color]) => pct > 0 && <div key={label} style={{ width: `${pct}%`, background: color }} title={`${label}: ${pct}%`} />)}
+      </div>
+      <div className="match-legend">
+        {items.map(([label, pct, color]) => (
+          <span key={label}><i style={{ background: color }} />{label}: {pct}%</span>
+        ))}
+      </div>
+    </section>
+  );
+}
+// The recruiter's own decision — never the AI's recommendation — drives the rest of the process:
+// it's what gets saved, and only saving it triggers drafting the recruitment email.
+function HumanDecisionPanel({
+  c,
+  mode,
+  refresh,
+}: {
+  c: Candidate;
+  mode: "pre" | "post";
+  refresh: () => Promise<void>;
+}) {
+  const isPostMode = mode === "post";
+  const savedDecision = isPostMode ? c.postHumanDecision : c.preHumanDecision;
+  const savedReason = isPostMode ? c.postHumanDecisionReason : c.preHumanDecisionReason;
+  const savedDate = isPostMode ? c.postHumanDecisionDate : c.preHumanDecisionDate;
+  const options = isPostMode ? ["להעביר ללקוח", "לא להעביר ללקוח"] : ["לזמן לראיון פנימי", "לא לקדם למשרה זו"];
+  const [editing, setEditing] = useState(!savedDecision);
+  const [decision, setDecision] = useState(savedDecision || "");
+  const [reason, setReason] = useState(savedReason || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setDecision(savedDecision || "");
+    setReason(savedReason || "");
+  }, [savedDecision, savedReason]);
+  async function save() {
+    if (!decision) { setError("יש לבחור החלטה"); return; }
+    if (reason.trim().length < 5) { setError("יש להזין נימוק להחלטה"); return; }
+    setSaving(true);
+    setError("");
+    try {
+      const r = await fetch("/api/evaluate/decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: c.applicationId, mode, decision, reason: reason.trim() }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "שמירת ההחלטה נכשלה");
+      setEditing(false);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "שמירת ההחלטה נכשלה");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <section className="panel content-card decision-card">
+      <h2>ההחלטה שלך</h2>
+      {!editing && savedDecision ? (
+        <>
+          <b className={`big-recommend ${statusClass(savedDecision)}`}>● {savedDecision}</b>
+          <p>{savedReason}</p>
+          <small className="updated">הוחלט: {formatDate(savedDate)}</small>
+          <div className="editor-actions">
+            <button className="secondary" onClick={() => setEditing(true)}>עריכת ההחלטה</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="mail-purpose">ההחלטה שלך היא שקובעת את המשך התהליך ואת נוסח מייל הגיוס — המלצת ה-AI היא ייעוץ בלבד ואינה מחייבת.</p>
+          <div className="decision-options">
+            {options.map((opt) => (
+              <button key={opt} type="button" className={decision === opt ? "primary" : "secondary"} onClick={() => setDecision(opt)}>{opt}</button>
+            ))}
+          </div>
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="נימוק ההחלטה שלך — זה הבסיס היחיד לניסוח מייל הגיוס" rows={3} />
+          <div className="editor-actions">
+            {savedDecision && (
+              <button className="secondary" disabled={saving} onClick={() => { setEditing(false); setDecision(savedDecision); setReason(savedReason); setError(""); }}>ביטול</button>
+            )}
+            <button className="primary" disabled={saving || !decision || reason.trim().length < 5} onClick={save}>{saving ? "שומר ומכין מייל..." : "שמירת ההחלטה"}</button>
+          </div>
+          {error && <div className="cv-message error">{error}</div>}
+        </>
+      )}
+    </section>
+  );
 }
 function Evaluation({
   c,
@@ -2332,9 +2449,18 @@ function Evaluation({
   const isPostMode = mode === "post";
   // Pre and post evaluations are stored independently, so each mode reads only its own dedicated
   // slot — running one never affects what the other mode shows.
-  const relevantEval: PreEvaluationResult | PostEvaluationResult | null = isPostMode ? c.postEvaluation : c.preEvaluation;
+  // Evaluations produced before the "AI advises, recruiter decides" schema change (no
+  // ai_recommendation/requirement_match_summary fields) are treated as stale — prompt a fresh run
+  // instead of crashing on missing fields.
+  const rawEval = isPostMode ? c.postEvaluation : c.preEvaluation;
+  const relevantEval: PreEvaluationResult | PostEvaluationResult | null = rawEval && "ai_recommendation" in rawEval && "requirement_match_summary" in rawEval ? rawEval : null;
   const relevantEvalDate = isPostMode ? c.postEvaluationDate : c.preEvaluationDate;
-  const sources = `דרישות המשרה + קורות חיים${c.recruiterOpinion ? " + חוות דעת מגייס" : ""}${isPostMode ? " + סיכום ראיון מקצועי" : ""}`;
+  // Employees promoted to a candidate (see "קידום כמועמד") get a full card profile but never an
+  // uploaded CV — evaluation must still be possible from the card alone in that case.
+  const hasCard = Boolean(c.summary?.trim());
+  const cvOrCardSource = c.cvTextLength ? "קורות חיים" : "פרטי הכרטיס (ללא קורות חיים)";
+  const canEvaluateSource = Boolean(c.cvTextLength || hasCard);
+  const sources = `דרישות המשרה + ${cvOrCardSource}${c.recruiterOpinion ? " + חוות דעת מגייס" : ""}${isPostMode ? " + סיכום ראיון מקצועי" : ""}`;
   const showNoInterviewWarning = isPostMode && !c.interviewSummary;
   async function run(reviewerFeedback = "") {
     setRunning(true);
@@ -2439,7 +2565,7 @@ function Evaluation({
           <span>✦</span>
           <h2>{isPostMode ? "הערכת מועמד לאחר ראיון באמצעות AI" : "הערכת התאמה לפני ראיון באמצעות AI"}</h2>
           <p>
-            המערכת תנתח את דרישות המשרה, קורות החיים
+            המערכת תנתח את דרישות המשרה, {c.cvTextLength ? "קורות החיים" : "פרטי הכרטיס"}
             {c.recruiterOpinion ? ", חוות דעת המגייס" : ""}
             {isPostMode ? " וסיכום הראיון המקצועי" : ""} לפי הוראות ״בודק התאמת מועמדים״.
           </p>
@@ -2449,13 +2575,14 @@ function Evaluation({
           </div>
           <button
             className="primary"
-            disabled={running || !c.cvTextLength || (isPostMode && !c.interviewSummary)}
+            disabled={running || !canEvaluateSource || (isPostMode && !c.interviewSummary)}
             onClick={() => run()}
           >
             {running ? `מנתח את ההתאמה... (${elapsedSec} שניות)` : isPostMode ? "הפעלת הערכה לאחר ראיון" : "הפעלת הערכה לפני ראיון"}
           </button>
           {running && <small>{streamStep ? `ה-AI כותב כרגע: ${streamStep}...` : "מתחיל לנתח..."} ניתוח מלא יכול לקחת 1-3 דקות — אין צורך לרענן.</small>}
-          {!c.cvTextLength && <small>יש להעלות קורות חיים ולחלץ מהם טקסט תחילה.</small>}
+          {!canEvaluateSource && <small>יש להעלות קורות חיים ולחלץ מהם טקסט, או למלא תקציר ניסיון בכרטיס המועמד, לפני הרצת הערכה.</small>}
+          {!c.cvTextLength && hasCard && <small>לא הועלו קורות חיים למועמד/ת זו — ההערכה תתבסס על פרטי הכרטיס בלבד (למשל עובד/ת פנימי/ת שקודמו למועמדות).</small>}
           {isPostMode && !c.interviewSummary && <small>יש להשלים ולאשר סיכום ראיון תחילה.</small>}
           {error && <div className="cv-message error">{error}</div>}
         </section>
@@ -2467,8 +2594,8 @@ function Evaluation({
       <div className="evaluation-page">
         <section className="panel evaluation-banner">
           <div>
-            <span>החלטה</span>
-            <b className={`big-recommend ${statusClass(pe.decision)}`}>● {pe.decision}</b>
+            <span>המלצת AI (לא החלטה)</span>
+            <b className={`big-recommend ${statusClass(pe.ai_recommendation)}`}>● {pe.ai_recommendation}</b>
           </div>
           <div>
             <span>סוג הערכה</span>
@@ -2486,8 +2613,8 @@ function Evaluation({
         </div>
         {error && <div className="cv-message error">{error}</div>}
         <section className="panel bottom-line">
-          <span>נימוק ההחלטה</span>
-          <p>{pe.decision_reason}</p>
+          <span>נימוק המלצת ה-AI</span>
+          <p>{pe.ai_recommendation_reason}</p>
         </section>
         <section className="panel content-card">
           <h2>ליבת המשרה</h2>
@@ -2507,12 +2634,18 @@ function Evaluation({
             ))}
           </div>
         </section>
-        <section className="panel content-card recruitment-mail">
-          <h2>מייל לגיוס — החלטה על זימון לראיון</h2>
-          <p className="mail-purpose">המייל מסכם אם לזמן את המועמד לראיון מקצועי ומה הכריע את ההחלטה. אפשר להעתיק כמו שהוא או להמשיך שיח עם ה-AI לשיפור הניסוח.</p>
-          <EmailChatPanel key={relevantEvalDate} recruitmentEmail={pe.recruitment_email} applicationId={c.applicationId} evalType="ראשונית" />
-        </section>
+        <RequirementMatchBar summary={pe.requirement_match_summary} />
         <EvaluationChatPanel c={c} mode={mode} running={running} run={run} />
+        <HumanDecisionPanel c={c} mode={mode} refresh={refresh} />
+        {pe.recruitment_email ? (
+          <section className="panel content-card recruitment-mail">
+            <h2>מייל לגיוס — החלטה על זימון לראיון</h2>
+            <p className="mail-purpose">המייל נוסח אך ורק לפי ההחלטה והנימוק שהזנת למעלה. אפשר להעתיק כמו שהוא או להמשיך שיח עם ה-AI לשיפור הניסוח.</p>
+            <EmailChatPanel key={`${relevantEvalDate}-${c.preHumanDecisionDate}`} recruitmentEmail={pe.recruitment_email} applicationId={c.applicationId} evalType="ראשונית" />
+          </section>
+        ) : (
+          <div className="privacy-note">מייל הגיוס ייכתב אוטומטית ברגע שתשמור את ההחלטה שלך למעלה.</div>
+        )}
         <InterviewQuestionsPanel c={c} refresh={refresh} pe={pe} />
         {c.proposedEngineRule && c.engineRuleStatus !== "ללא הצעה" && (
           <EngineRulePanel c={c} ruleUpdating={ruleUpdating} decideRule={decideRule} refresh={refresh} />
@@ -2521,20 +2654,12 @@ function Evaluation({
     );
   }
   const e = relevantEval as PostEvaluationResult;
-  const recruitmentEmail = e.recruitment_email;
   return (
     <div className="evaluation-page">
       <section className="panel evaluation-banner">
         <div>
-          <span>ציון התאמה</span>
-          <strong>
-            {e.score}
-            <small> / 100</small>
-          </strong>
-        </div>
-        <div>
-          <span>החלטה</span>
-          <b className={`big-recommend ${statusClass(e.decision)}`}>● {e.decision}</b>
+          <span>המלצת AI (לא החלטה)</span>
+          <b className={`big-recommend ${statusClass(e.ai_recommendation)}`}>● {e.ai_recommendation}</b>
         </div>
         <div>
           <span>סוג הערכה</span>
@@ -2552,7 +2677,7 @@ function Evaluation({
       </div>
       {error && <div className="cv-message error">{error}</div>}
       <section className="panel bottom-line">
-        <span>שורה תחתונה</span>
+        <span>תמצית ההמלצה</span>
         <p>{e.bottom_line}</p>
       </section>
       <section className="panel content-card">
@@ -2593,17 +2718,23 @@ function Evaluation({
           ))}
         </ul>
       </section>
+      <RequirementMatchBar summary={e.requirement_match_summary} />
       {e.cv_changes_needed && (
         <div className="cv-message needs-final-evaluation">
-          נדרשים שינויים בקורות החיים לפני העברה ללקוח — פורטו בסוף מייל הגיוס למטה.
+          נדרשים שינויים בקורות החיים לפני העברה ללקוח — יש לקחת זאת בחשבון בהחלטה ובנימוק שלך למטה.
         </div>
       )}
-      <section className="panel content-card recruitment-mail">
-        <h2>מייל לגיוס - החלטה על העברה ללקוח</h2>
-        <p className="mail-purpose">המייל חייב להנחות במפורש אם להעביר את המועמד ללקוח המגייס או לא. ההחלטה המקצועית אינה מועברת לצוות הגיוס. אפשר להעתיק כמו שהוא או להמשיך שיח עם ה-AI לשיפור הניסוח.</p>
-        <EmailChatPanel key={relevantEvalDate} recruitmentEmail={recruitmentEmail} applicationId={c.applicationId} evalType="לאחר ראיון" />
-      </section>
       <EvaluationChatPanel c={c} mode={mode} running={running} run={run} />
+      <HumanDecisionPanel c={c} mode={mode} refresh={refresh} />
+      {e.recruitment_email ? (
+        <section className="panel content-card recruitment-mail">
+          <h2>מייל לגיוס - החלטה על העברה ללקוח</h2>
+          <p className="mail-purpose">מייל ארכיוני מלא — כולל פירוט מקצועי ואישיותי של הראיון (תמיד, בלי קשר להחלטה), ובסיום ההחלטה והנימוק שהזנת למעלה. אפשר להעתיק כמו שהוא או להמשיך שיח עם ה-AI לשיפור הניסוח.</p>
+          <EmailChatPanel key={`${relevantEvalDate}-${c.postHumanDecisionDate}`} recruitmentEmail={e.recruitment_email} applicationId={c.applicationId} evalType="לאחר ראיון" />
+        </section>
+      ) : (
+        <div className="privacy-note">מייל הגיוס ייכתב אוטומטית ברגע שתשמור את ההחלטה שלך למעלה.</div>
+      )}
       {c.proposedEngineRule && c.engineRuleStatus !== "ללא הצעה" && (
         <EngineRulePanel c={c} ruleUpdating={ruleUpdating} decideRule={decideRule} refresh={refresh} />
       )}
@@ -2940,6 +3071,7 @@ type JobDraft = {
   minYears: number | null;
   professionalEmphasis: string;
   personalityEmphasis: string;
+  hiringManagerEmphasis: string;
   internalNotes: string;
   uncertainties: string[];
 };
@@ -2975,6 +3107,7 @@ function JobForm({
     minYears: job?.minYears ?? null,
     professionalEmphasis: job?.emphasis || "",
     personalityEmphasis: job?.personality || "",
+    hiringManagerEmphasis: job?.hiringManagerEmphasis || "",
     internalNotes: job?.notes || "",
     uncertainties: [],
   });
@@ -3043,6 +3176,7 @@ function JobForm({
         minYears: draft.minYears,
         professionalEmphasis: draft.professionalEmphasis,
         personalityEmphasis: draft.personalityEmphasis,
+        hiringManagerEmphasis: draft.hiringManagerEmphasis,
         internalNotes: draft.internalNotes,
       });
     } finally {
@@ -3241,6 +3375,14 @@ function JobForm({
             <textarea
               value={draft.personalityEmphasis}
               onChange={(e) => set("personalityEmphasis", e.target.value)}
+            />
+          </label>
+          <label className="wide hiring-manager-field">
+            דגשי מנהל מגייס — עדיפות עליונה (נחשב כמעט כדרישת חובה)
+            <textarea
+              value={draft.hiringManagerEmphasis}
+              onChange={(e) => set("hiringManagerEmphasis", e.target.value)}
+              placeholder='רק דברים שהמנהל המגייס בצד הלקוח אמר במפורש שהכי חשובים לו'
             />
           </label>
           <label className="wide">
@@ -3699,14 +3841,15 @@ function ArchivePage({
 
 function UsageGuide({ setView }: { setView: (v: View) => void }) {
   const steps = [
-    ["1", "יוצרים משרה", "מדביקים מלל חופשי ממייל, תמלול שיחה או דרישות הלקוח. ה-AI מציע טיוטה מובנית — שם, לקוח, חובה, יתרון, דגשים מקצועיים ואישיותיים. אתה בודק, מתקן ושומר."],
+    ["1", "יוצרים משרה", "מדביקים מלל חופשי ממייל, תמלול שיחה או דרישות הלקוח. ה-AI מציע טיוטה מובנית — שם, לקוח, חובה, יתרון, דגשים מקצועיים ואישיותיים. אם משהו מיוחס במפורש למנהל המגייס בצד הלקוח, הוא מופרד לשדה ייעודי \"דגשי מנהל מגייס\" (מוצג בהדגשה בראש עמוד המשרה) — הוא מקבל עדיפות עליונה בכל הערכת מועמד מול המשרה, כמעט כדרישת חובה. אתה בודק, מתקן ושומר."],
     ["2", "מוסיפים מועמד", "יוצרים מועמד ומשייכים אותו למשרה. אותו אדם יכול להיות משויך למספר משרות — לכל מועמדות נשמרים בנפרד סטטוס, ראיון, והערכת AI. אפשר לשייך למשרה נוספת מתוך דף המועמד."],
     ["3", "בונים את תיק המועמד", "מעלים PDF (עד 10MB) — חילוץ מהיר או חילוץ AI. מאמתים ומתקנים פרטים לפני שמירה. שומרים גם חוות דעת המגייס מהראיון הראשוני — היא משמשת מקור משני בהערכות."],
-    ["4", "הערכה לפני ראיון", "לשונית ״הערכה לפני ראיון״ — AI משווה בין דרישות המשרה, קורות החיים וחוות דעת המגייס, ומחזיר ציון, חוזקות, פערים, שאלות לראיון ומייל גיוס. ניתן להמשיך שיח עם ה-AI לשיפור המייל."],
-    ["5", "מתעדים ראיון מקצועי", "לשונית ״סיכום ראיון״ — הדבקת תמלול Teams/הערות או העלאת קובץ טקסט. ה-AI יוצר טיוטה, אתה עורך ומאשר. רק לאחר אישור הסיכום עובר ללשונית ״הערכה לאחר ראיון״."],
-    ["6", "הערכה לאחר ראיון", "לשונית ״הערכה לאחר ראיון״ — ניתוח מלא הכולל גם את סיכום הראיון. ההחלטה היא להעביר ללקוח או לא. מייל גיוס נפרד עם שורה תחתונה חד-משמעית."],
-    ["7", "ניהול סטטוס ומשימות", "הסטטוס מתקדם אוטומטית בצמתים מרכזיים. ניתן לשנות ידנית — כולל ״הפסיק תהליך״ עם הסבר. הפעולה הבאה מופיעה גם בלוח הבקרה."],
-    ["8", "ניהול צוות ושאילתות AI", "לשונית ״ניהול צוות״ — ישות לכל עובד עם סיכום שיחה, action items ומשרות מתאימות. לשונית ״שאילתות AI כלליות״ — שאל כל שאלה על המערכת."],
+    ["4", "הערכה לפני ראיון", "לשונית ״הערכה לפני ראיון״ — ה-AI משווה בין דרישות המשרה, קורות החיים וחוות דעת המגייס, ומחזיר טבלת התאמה לכל דרישה, סיכום אחוזים (כמה דרישות הן התאמה מלאה/חלקית/לא ברור/אין התאמה) והמלצה מנומקת. חשוב: זו המלצה בלבד — ה-AI לא מחליט. אפשר לדון עם ה-AI על ההמלצה בשיח ייעודי, אבל ההחלטה בפועל (לזמן לראיון פנימי / לא לקדם) מוזנת ידנית על ידך יחד עם נימוק. רק אחרי שאתה שומר החלטה נוצר מייל הגיוס — מנוסח לפי ההחלטה והנימוק שלך בלבד, ואפשר להמשיך לשכלל אותו בשיח."],
+    ["5", "מתעדים ראיון מקצועי", "לשונית ״סיכום ראיון״ — הדבקת תמלול Teams/הערות, או העלאת קובץ .docx/.pdf עם חילוץ טקסט אוטומטי. ה-AI יוצר טיוטה, אתה עורך ומאשר. רק לאחר אישור הסיכום עובר ללשונית ״הערכה לאחר ראיון״."],
+    ["6", "הערכה לאחר ראיון", "אותו עיקרון: ה-AI מנתח את הראיון מול דרישות המשרה (חוזקות, פערים, אי-ודאויות, סיכום אחוזים) ונותן המלצה מנומקת — להעביר ללקוח או לא, אבל שוב, זו המלצה בלבד. אתה מזין את ההחלטה שלך + נימוק. רק אז נוצר מייל ארכיוני מלא (נשמר בתיבות המייל של החברה לטווח ארוך): פסקת היבט אישיותי, פסקת היבט מקצועי (כולל רשימת כל הטכנולוגיות שעלו בראיון ויש למועמד), פסקת התאמה למשרה, ולבסוף שורה תחתונה עם ההחלטה — כל פסקה עם כותרת ונקודות, לא בלוק טקסט."],
+    ["7", "למידה מהחלטות שלך", "כל הערכה כוללת אפשרות ל\"משוב מקצועי\" בשיח — אם תתקן את ה-AI ותסביר למה, הוא עשוי להציע כלל כללי ללמידה. בנוסף, המערכת בודקת אוטומטית: אם ההחלטה שאתה שומר סותרת את המלצת ה-AI, מופעלת בדיקה זהירה (ברירת המחדל: אין תובנה) שמחפשת רק דפוס באמת כללי, לא מקרה נקודתי. בשני המקרים ההצעה מופיעה ככרטיס \"הצעה לעדכון פרומפט ההערכה\" בתחתית אותה לשונית הערכה (לפני/אחרי ראיון) שבה זה קרה — שם אפשר לראות מה בדיוק יתווסף לפרומפט ולמה, לדון ולחדד עם ה-AI, ורק באישור שלך זה משתלב בפועל בתוך ההוראות (נראה ועריך ב\"הוראות AI\")."],
+    ["8", "ניהול סטטוס ומשימות", "הסטטוס מתקדם אוטומטית בצמתים מרכזיים. ניתן לשנות ידנית — כולל ״הפסיק תהליך״ עם הסבר. הפעולה הבאה מופיעה גם בלוח הבקרה. הרצת הערכה מחדש (לפני או אחרי ראיון) מאפסת את ההחלטה שנשמרה לאותו שלב בלבד — כי היא כבר לא תואמת את ההשוואה החדשה — ולא נוגעת בהחלטה של השלב האחר."],
+    ["9", "ניהול צוות ושאילתות AI", "לשונית ״ניהול צוות״ — ישות לכל עובד עם סיכום שיחה, action items, התאמת משרות וניתוח מקצועי (בקריאת AI אחת), וקידום עובד למועמד. לשונית ״שאילתות AI כלליות״ — שאל כל שאלה על המערכת."],
   ];
   return (
     <>
@@ -3723,7 +3866,7 @@ function UsageGuide({ setView }: { setView: (v: View) => void }) {
         <div className="guide-intro-icon">◎</div>
         <div>
           <h2>מה נשמר והיכן</h2>
-          <p>פרטי המועמד, קורות החיים וחוות דעת המגייס נשמרים בתיק המועמד. סטטוס, סיכום ראיון מקצועי והערכת AI נשמרים בנפרד לכל מועמדות.</p>
+          <p>פרטי המועמד, קורות החיים וחוות דעת המגייס נשמרים בתיק המועמד. סטטוס, סיכום ראיון מקצועי והערכות AI (לפני ואחרי ראיון) נשמרות בנפרד ועצמאית לכל מועמדות — הרצת הערכה אחת לעולם לא דורסת את השנייה.</p>
         </div>
       </section>
       <section className="guide-flow">
@@ -3741,11 +3884,11 @@ function UsageGuide({ setView }: { setView: (v: View) => void }) {
         <section className="panel guide-rule">
           <span className="rule-icon purple">✦</span>
           <div>
-            <h2>שתי נקודות הערכה</h2>
+            <h2>ה-AI מייעץ, אתה מחליט</h2>
             <p>
-              הערכה ראשונית מבוססת על משרה וקורות חיים. הערכה לאחר ראיון כוללת
-              גם את סיכום הראיון המקצועי. חוות דעת מגייס, אם נשמרה בתיק המועמד,
-              משמשת מקור משלים בשתי ההערכות. לאחר שינוי במקורות יש להפעיל הערכה מחדש.
+              בשתי נקודות ההערכה (לפני/אחרי ראיון) ה-AI לעולם לא קובע סטטוס סופי — הוא רק משווה
+              דרישות מול המועמד ונותן המלצה מנומקת. ההחלטה בפועל, וכפועל יוצא ממנה מייל הגיוס,
+              תמיד מוזנת ידנית על ידך. חוות דעת מגייס, אם נשמרה, משמשת מקור משלים בלבד בשתי ההערכות.
             </p>
           </div>
         </section>
@@ -3754,6 +3897,17 @@ function UsageGuide({ setView }: { setView: (v: View) => void }) {
           <div>
             <h2>אין השלמת מידע חסר</h2>
             <p>מידע שלא נמצא יסומן כלא ידוע או דורש בירור.</p>
+          </div>
+        </section>
+        <section className="panel guide-rule">
+          <span className="rule-icon blue">⚙</span>
+          <div>
+            <h2>כל פרומפטי ה-AI ניתנים לעריכה</h2>
+            <p>
+              בטאב ״הוראות AI״ (Admin) אפשר לצפות ולערוך את כל הכללים שמנחים כל פעולת AI במערכת,
+              מקובצים לפי אזור (מועמדים / משרות / ניהול צוות / שאילתות כלליות). שינוי נשמר מיד ומשפיע
+              על הפעלות הבאות בלבד. טאב ״פעילות AI ועלויות״ מציג את כל היסטוריית הקריאות עם עלות משוערת.
+            </p>
           </div>
         </section>
       </div>
@@ -3799,6 +3953,10 @@ function EmailChatPanel({ recruitmentEmail, applicationId, evalType }: {
 }
 function GeneralAiPage({ jobs, candidates }: { jobs: Job[]; candidates: Candidate[] }) {
   const [query, setQuery] = useState(""), [reply, setReply] = useState(""), [loading, setLoading] = useState(false), [error, setError] = useState("");
+  const [teamCount, setTeamCount] = useState<number | null>(null);
+  useEffect(() => {
+    fetch("/api/team").then(r => r.ok ? r.json() : null).then(d => { if (d) setTeamCount((d.members || []).length); }).catch(() => {});
+  }, []);
   async function ask() {
     if (!query.trim()) return;
     setLoading(true); setError(""); setReply("");
@@ -3812,9 +3970,9 @@ function GeneralAiPage({ jobs, candidates }: { jobs: Job[]; candidates: Candidat
   }
   return (
     <>
-      <Heading title="שאילתות AI כלליות" subtitle="שאל שאלות על המערכת, בקש סיכומים, השוואות, או כל ניתוח על המועמדים והמשרות." />
+      <Heading title="שאילתות AI כלליות" subtitle="גישה מלאה לכל נתוני המערכת — משרות, מועמדים, צוות, פרומפטי AI, פעילות ועלויות, משתמשים וביקורת. שאל כל שאלה, גם על המערכת עצמה." />
       <section className="panel content-card">
-        <p style={{margin:"0 0 12px",color:"var(--muted)"}}>בסיס הנתונים: <b>{jobs.filter(j=>j.status==="פעילה").length}</b> משרות פעילות, <b>{new Set(candidates.map(c=>c.id)).size}</b> מועמדים.</p>
+        <p style={{margin:"0 0 12px",color:"var(--muted)"}}>בסיס הנתונים: <b>{jobs.filter(j=>j.status==="פעילה").length}</b> משרות פעילות, <b>{new Set(candidates.map(c=>c.id)).size}</b> מועמדים{teamCount !== null && <> ,<b> {teamCount}</b> עובדי צוות פנימיים</>} — וגם גישה מלאה לכל שאר נתוני המערכת (כולל ארכיון, פרומפטי AI, פעילות ועלויות, משתמשים וביקורת).</p>
         <textarea value={query} onChange={e=>setQuery(e.target.value)} placeholder='למשל: "סכם לי את כל המועמדים שמחכים להחלטה" / "אילו מועמדים מתאימים גם למשרת ה-MLE?"' style={{minHeight:100,width:"100%",border:"1px solid #dfe2e9",borderRadius:8,padding:10}} />
         <div style={{marginTop:10,display:"flex",gap:8}}>
           <button className="ai-button" disabled={loading||!query.trim()} onClick={ask}>{loading?"מעבד...":"✦ שאל את ה-AI"}</button>
@@ -3827,8 +3985,26 @@ function GeneralAiPage({ jobs, candidates }: { jobs: Job[]; candidates: Candidat
 }
 
 type TeamAiInsight = {matches:Array<{job_title:string;client:string;fit_score:number;reason:string}>;analysis:string;strengths:string[];gaps:string[];growth_recommendation:string;next_steps:string[]} | null;
-type TeamMember = {id:number;name:string;notes:string;targetJobIds:number[];actions:string[];aiInsight:TeamAiInsight;aiInsightUpdatedAt:string|null;createdAt:string};
+type TeamMember = {
+  id:number; name:string; notes:string; targetJobIds:number[]; actions:string[];
+  aiInsight:TeamAiInsight; aiInsightUpdatedAt:string|null; createdAt:string;
+  role:string; client:string; nayaStartDate:string|null; nextStepSummary:string; lastMeetingDate:string|null;
+};
 type TeamMeeting = {id:number;memberId:number;meetingDate:string;summary:string;actionItems:string[];createdAt:string};
+// Tenure at NAYA, derived live from a join date — never stored, so it never goes stale.
+function formatTenure(startDate: string | null): string {
+  if (!startDate) return "—";
+  const start = new Date(startDate);
+  if (Number.isNaN(start.getTime())) return "—";
+  const now = new Date();
+  let months = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
+  if (now.getDate() < start.getDate()) months--;
+  if (months < 0) return "—";
+  const years = Math.floor(months / 12), remMonths = months % 12;
+  if (years === 0) return `${remMonths} ${remMonths === 1 ? "חודש" : "חודשים"}`;
+  if (remMonths === 0) return `${years} ${years === 1 ? "שנה" : "שנים"}`;
+  return `${years} ${years === 1 ? "שנה" : "שנים"} ו-${remMonths} ${remMonths === 1 ? "חודש" : "חודשים"}`;
+}
 
 function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
   member: TeamMember; jobs: Job[];
@@ -3913,29 +4089,29 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
     }).finally(() => setAiRunning(false));
   }
 
-  const initials = member.name.split(" ").map((w:string)=>w[0]).join("").slice(0,2);
-  const meetingCount = member.aiInsightUpdatedAt ? "✓" : "";
   return (
-    <section className="panel content-card" style={{marginBottom:8}}>
-      {/* Collapsed header row — always visible */}
-      <div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer"}} onClick={()=>setOpen(o=>!o)}>
-        <div className="avatar violet" style={{width:38,height:38,borderRadius:"50%",display:"grid",placeItems:"center",fontWeight:800,fontSize:14,flexShrink:0}}>
-          {initials}
-        </div>
-        <div style={{flex:1}}>
-          <b style={{fontSize:15}}>{member.name}</b>
-        </div>
-        {meetingCount && <span title="סקירת AI בוצעה" style={{fontSize:11,color:"var(--green)",background:"var(--green-soft)",borderRadius:6,padding:"2px 7px",fontWeight:700}}>✓ AI</span>}
-        <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
+    <>
+    <tr className="team-row" onClick={()=>setOpen(o=>!o)}>
+      <td><b>{member.name}</b></td>
+      <td>{member.role || "—"}</td>
+      <td>{member.client || "—"}</td>
+      <td>{formatTenure(member.nayaStartDate)}</td>
+      <td className="team-next-step">{member.nextStepSummary || "—"}</td>
+      <td>{member.lastMeetingDate ? formatDate(member.lastMeetingDate) : "—"}</td>
+      <td>{member.aiInsightUpdatedAt ? formatDate(member.aiInsightUpdatedAt) : "—"}</td>
+      <td onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
           <button className="secondary" style={{fontSize:11,padding:"4px 9px"}} onClick={onEdit}>עריכה</button>
           <button className="danger-text-button" style={{fontSize:11}} onClick={onDelete}>מחיקה</button>
+          <span style={{color:"var(--muted)",fontSize:14,cursor:"pointer"}} onClick={()=>setOpen(o=>!o)}>{open?"▲":"▼"}</span>
         </div>
-        <span style={{color:"var(--muted)",fontSize:14,marginRight:4}}>{open?"▲":"▼"}</span>
-      </div>
-
-      {/* Expanded content */}
-      {open && <>
-      <div className="tabs" style={{marginTop:14,paddingTop:14,borderTop:"1px solid var(--line)",marginBottom:12}}>
+      </td>
+    </tr>
+    {open && (
+      <tr className="team-row-expanded">
+        <td colSpan={8}>
+          <div className="panel content-card" style={{margin:"0 0 8px"}}>
+      <div className="tabs" style={{marginTop:0,paddingTop:0,borderTop:"none",marginBottom:12}}>
         {([["summary","סיכום עובד"],["timeline","ציר זמן"],["meeting","פגישה חדשה"],["insight","✦ התאמת משרות + ניתוח AI"],["promote","✦ קידום כמועמד"]] as const).map(([k,l])=>(
           <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{l}</button>
         ))}
@@ -4071,8 +4247,11 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
         </div>
       )}
       {tab==="promote" && <PromoteTab member={member} jobs={jobs} />}
-      </>}
-    </section>
+          </div>
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
 
@@ -4177,14 +4356,34 @@ function PromoteTab({ member, jobs }: { member: TeamMember; jobs: Job[] }) {
   );
 }
 
+const EMPTY_TEAM_FORM = {name:"",notes:"",role:"",client:"",nayaStartDate:"",nextStepSummary:""};
+type TeamSortField = "name"|"role"|"client"|"tenure"|"nextStep"|"lastMeeting"|"aiUpdated";
 function TeamPage({ jobs }: { jobs: Job[] }) {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [formTab, setFormTab] = useState<"manual"|"ai">("manual");
   const [editMember, setEditMember] = useState<TeamMember|null>(null);
-  const [form, setForm] = useState({name:"",notes:""});
+  const [form, setForm] = useState(EMPTY_TEAM_FORM);
   const [rawText, setRawText] = useState(""), [extracting, setExtracting] = useState(false), [extractErr, setExtractErr] = useState("");
+  const [sortField, setSortField] = useState<TeamSortField>("name");
+  const [sortDir, setSortDir] = useState<1|-1>(1);
+  function toggleSort(f: TeamSortField) { if (sortField===f) setSortDir(d=>d===1?-1:1); else { setSortField(f); setSortDir(1); } }
+  const SH = ({f,children}:{f:TeamSortField;children:React.ReactNode}) => <button className="sort-head" onClick={()=>toggleSort(f)}>{children}{sortField===f?(sortDir===1?" ↑":" ↓"):""}</button>;
+  const sortedMembers = [...members].sort((a,b) => {
+    const valueOf = (m: TeamMember): string => {
+      switch (sortField) {
+        case "name": return m.name || "";
+        case "role": return m.role || "";
+        case "client": return m.client || "";
+        case "tenure": return m.nayaStartDate || "";
+        case "nextStep": return m.nextStepSummary || "";
+        case "lastMeeting": return m.lastMeetingDate || "";
+        case "aiUpdated": return m.aiInsightUpdatedAt || "";
+      }
+    };
+    return valueOf(a).localeCompare(valueOf(b), "he", { numeric: true }) * sortDir;
+  });
 
   useEffect(() => { fetchMembers(); }, []);
   async function fetchMembers() {
@@ -4195,7 +4394,7 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
   async function saveMember() {
     const body = editMember ? {...form,id:editMember.id} : form;
     const r = await fetch("/api/team", { method:editMember?"PATCH":"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
-    if (r.ok) { setShowForm(false); setEditMember(null); setForm({name:"",notes:""}); setRawText(""); await fetchMembers(); }
+    if (r.ok) { setShowForm(false); setEditMember(null); setForm(EMPTY_TEAM_FORM); setRawText(""); await fetchMembers(); }
   }
   async function extractProfile() {
     if (rawText.trim().length < 20) { setExtractErr("יש להדביק לפחות 20 תווים"); return; }
@@ -4204,7 +4403,15 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
       const r = await fetch("/api/team/extract-profile", { method:"POST", headers:{"Content-Type":"application/json"},
         body:JSON.stringify({ text: rawText.slice(0, 3000) }) });
       const d = await r.json(); if (!r.ok) throw new Error(d.error);
-      setForm(f => ({ name: d.name || f.name || "", notes: d.notes || "" }));
+      setForm(f => ({
+        ...f,
+        name: d.name || f.name || "",
+        notes: d.notes || "",
+        role: f.role || d.role || "",
+        client: f.client || d.client || "",
+        nayaStartDate: f.nayaStartDate || d.nayaStartDate || "",
+        nextStepSummary: f.nextStepSummary || d.nextStepSummary || "",
+      }));
       setFormTab("manual");
     } catch(e) { setExtractErr(e instanceof Error ? e.message : "שגיאה"); }
     finally { setExtracting(false); }
@@ -4218,7 +4425,7 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
   return (
     <>
       <Heading title="ניהול צוות" subtitle="מעקב אחר עובדים — פגישות 1:1, ציר זמן, ניתוח AI והתאמת משרות." action={
-        <button className="primary" onClick={()=>{setShowForm(true);setEditMember(null);setForm({name:"",notes:""});setRawText("");setFormTab("manual");}}>＋ עובד חדש</button>
+        <button className="primary" onClick={()=>{setShowForm(true);setEditMember(null);setForm(EMPTY_TEAM_FORM);setRawText("");setFormTab("manual");}}>＋ עובד חדש</button>
       } />
       {(showForm || editMember) && (
         <section className="panel content-card" style={{marginBottom:14}}>
@@ -4242,13 +4449,25 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
           {(formTab==="manual" || editMember) && (
             <div className="form-grid">
               <label className="wide">שם מלא<input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="שם העובד" /></label>
+              <label>תפקיד<input value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))} placeholder="DBA / Data Engineer / DevOps..." /></label>
+              <label>לקוח נוכחי<input value={form.client} onChange={e=>setForm(f=>({...f,client:e.target.value}))} placeholder="שם הלקוח, אם משובץ" /></label>
+              <label>תאריך הצטרפות לנאיה<input type="date" value={form.nayaStartDate} onChange={e=>setForm(f=>({...f,nayaStartDate:e.target.value}))} /></label>
+              <label className="wide">סיכום להמשך — מה סוכם עם העובד<input value={form.nextStepSummary} onChange={e=>setForm(f=>({...f,nextStepSummary:e.target.value}))} placeholder="למשל: לבחון ניוד ללקוח X בעוד חודש, ממתין לאישור זמינות" /></label>
               <label className="wide">
                 פרופיל / הערות כלליות
                 <div style={{display:"flex",gap:6,marginBottom:4}}>
                   <button type="button" className="secondary" style={{fontSize:11,padding:"4px 9px"}} disabled={extracting||form.notes.trim().length<20}
                     onClick={async()=>{ setExtracting(true); setExtractErr("");
                       try { const r=await fetch("/api/team/extract-profile",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:form.notes.slice(0,3000),nameHint:form.name})});
-                      const d=await r.json(); if(r.ok){ if(d.name&&!form.name)setForm(f=>({...f,name:d.name})); if(d.notes)setForm(f=>({...f,notes:d.notes})); } } catch{} finally{setExtracting(false);} }}>
+                      const d=await r.json(); if(r.ok){ setForm(f=>({
+                        ...f,
+                        name: d.name && !f.name ? d.name : f.name,
+                        notes: d.notes || f.notes,
+                        role: f.role || d.role || "",
+                        client: f.client || d.client || "",
+                        nayaStartDate: f.nayaStartDate || d.nayaStartDate || "",
+                        nextStepSummary: f.nextStepSummary || d.nextStepSummary || "",
+                      })); } } catch{} finally{setExtracting(false);} }}>
                     {extracting?"מעצב...":"✦ עיצוב AI"}
                   </button>
                   <small style={{color:"var(--muted)",alignSelf:"center"}}>ממיר טקסט גולמי לפרופיל מסודר</small>
@@ -4263,13 +4482,35 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
           </div>
         </section>
       )}
-      {members.map(m=>(
-        <TeamMemberCard key={m.id} member={m} jobs={jobs}
-          onEdit={()=>{setEditMember(m);setForm({name:m.name,notes:m.notes});setShowForm(false);}}
-          onDelete={()=>deleteMember(m.id)}
-          onRefresh={fetchMembers}
-        />
-      ))}
+      {members.length > 0 && (
+        <section className="panel table-panel">
+          <div className="table-wrap">
+            <table className="team-table">
+              <thead>
+                <tr>
+                  <th><SH f="name">שם</SH></th>
+                  <th><SH f="role">תפקיד</SH></th>
+                  <th><SH f="client">לקוח נוכחי</SH></th>
+                  <th><SH f="tenure">ותק בנאיה</SH></th>
+                  <th><SH f="nextStep">סיכום להמשך</SH></th>
+                  <th><SH f="lastMeeting">פגישה אחרונה</SH></th>
+                  <th><SH f="aiUpdated">עדכון AI</SH></th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {sortedMembers.map(m=>(
+                  <TeamMemberCard key={m.id} member={m} jobs={jobs}
+                    onEdit={()=>{setEditMember(m);setForm({name:m.name,notes:m.notes,role:m.role,client:m.client,nayaStartDate:m.nayaStartDate||"",nextStepSummary:m.nextStepSummary});setShowForm(false);}}
+                    onDelete={()=>deleteMember(m.id)}
+                    onRefresh={fetchMembers}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       {!members.length && loaded && <div className="empty-inline"><b>אין עובדים עדיין</b><span>לחץ "עובד חדש" כדי להתחיל.</span></div>}
     </>
   );

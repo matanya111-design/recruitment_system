@@ -35,7 +35,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "יש להפיק קודם הערכה לפני ראיון" }, { status: 422 });
     }
 
-    const input = `דרישות המשרה:\nשם: ${row.title}\nלקוח: ${row.client}\nתיאור: ${row.description}\nדרישות חובה: ${row.must_requirements}\nדרישות יתרון: ${row.preferred_requirements}\nטכנולוגיות: ${row.job_technologies}\n\nההערכה שכבר בוצעה למועמד:\nליבת המשרה: ${evaluation.core_role ?? ""}\nטבלת התאמה מול דרישות המשרה: ${JSON.stringify(evaluation.fit_table ?? [])}\nהחלטה: ${evaluation.decision ?? ""} — ${evaluation.decision_reason ?? ""}\n\nקורות חיים - טקסט מלא שחולץ:\n${String(row.cv_extracted_text ?? "").slice(0, 120000)}`;
+    const input = `דרישות המשרה:\nשם: ${row.title}\nלקוח: ${row.client}\nתיאור: ${row.description}\nדרישות חובה: ${row.must_requirements}\nדרישות יתרון: ${row.preferred_requirements}\nטכנולוגיות: ${row.job_technologies}\n\nההערכה שכבר בוצעה למועמד:\nליבת המשרה: ${evaluation.core_role ?? ""}\nטבלת התאמה מול דרישות המשרה: ${JSON.stringify(evaluation.fit_table ?? [])}\nהמלצת AI: ${evaluation.ai_recommendation ?? ""} — ${evaluation.ai_recommendation_reason ?? ""}\n\nקורות חיים - טקסט מלא שחולץ:\n${String(row.cv_extracted_text ?? "").slice(0, 120000)}`;
 
     const result = await generateStructured<{ questions: InterviewQuestion[] }>({
       operation: "interview_questions",

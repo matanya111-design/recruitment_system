@@ -29,6 +29,20 @@
       "when": 1790271222074,
       "tag": "0003_kind_tyrannus",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790275840932,
+      "tag": "0004_dry_killraven",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790277746904,
+      "tag": "0005_modern_brother_voodoo",
+      "breakpoints": true
     }
   ]
 }

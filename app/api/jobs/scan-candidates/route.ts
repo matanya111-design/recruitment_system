@@ -37,7 +37,7 @@ export async function POST(request: Request) {
   // Load job
   const jobRows = await db.execute(sql`
     SELECT id,title,client,description,must_requirements,preferred_requirements,
-           technologies,min_years,professional_emphasis,personality_emphasis
+           technologies,min_years,professional_emphasis,personality_emphasis,hiring_manager_emphasis
     FROM jobs WHERE id=${jobId} AND archived=false
   `);
   const job = (jobRows as unknown as { rows: Array<Record<string, unknown>> }).rows[0];
@@ -81,7 +81,10 @@ export async function POST(request: Request) {
 
   const scanInstructions = await getPrompt("candidate_scan", CANDIDATE_SCAN_INSTRUCTIONS);
 
-  const jobDescription = `שם: ${job.title}\nלקוח: ${job.client}\nתיאור: ${job.description}\nדרישות חובה: ${job.must_requirements}\nדרישות יתרון: ${job.preferred_requirements}\nטכנולוגיות: ${job.technologies}\nשנות ניסיון: ${job.min_years ?? "לא הוגדר"}\nדגשים מקצועיים: ${job.professional_emphasis}\nדגשים אישיותיים: ${job.personality_emphasis}`;
+  const hiringManagerLine = job.hiring_manager_emphasis
+    ? `\n⚠ דגשי מנהל מגייס בצד הלקוח - עדיפות עליונה, כמעט כדרישת חובה מיוחדת: ${job.hiring_manager_emphasis}`
+    : "";
+  const jobDescription = `שם: ${job.title}\nלקוח: ${job.client}\nתיאור: ${job.description}\nדרישות חובה: ${job.must_requirements}\nדרישות יתרון: ${job.preferred_requirements}\nטכנולוגיות: ${job.technologies}\nשנות ניסיון: ${job.min_years ?? "לא הוגדר"}\nדגשים מקצועיים: ${job.professional_emphasis}\nדגשים אישיותיים: ${job.personality_emphasis}${hiringManagerLine}`;
 
   // Evaluate in parallel batches of 5 to avoid overloading the proxy
   const BATCH = 5;

@@ -91,13 +91,12 @@ export async function GET(request: Request) {
 
     const jobRows = toRows(await db.execute(sql`
       SELECT j.*, COUNT(CASE WHEN a.archived=false THEN 1 END)::int candidates_count,
-        SUM(CASE WHEN a.recommendation IN ('מתאים','מתאימה','מתאים מאוד','מתאימה מאוד','לזמן לראיון פנימי','להעביר ללקוח') AND a.archived=false THEN 1 ELSE 0 END)::int high_fit_count,
-        SUM(CASE WHEN (a.recommendation = 'בירור קצר לפני ראיון' OR (a.score BETWEEN 60 AND 74 AND a.recommendation NOT IN ('לא מתאים','לא מתאימה','לא רלוונטי לתפקיד','לא לקדם למשרה זו','לא להעביר ללקוח'))) AND a.archived=false THEN 1 ELSE 0 END)::int reasonable_fit_count
+        SUM(CASE WHEN a.recommendation IN ('מתאים','מתאימה','מתאים מאוד','מתאימה מאוד','לזמן לראיון פנימי','להעביר ללקוח') AND a.archived=false THEN 1 ELSE 0 END)::int fit_count
       FROM jobs j LEFT JOIN applications a ON a.job_id=j.id WHERE j.archived=false GROUP BY j.id ORDER BY j.updated_at DESC
     `));
 
     const candidateRows = toRows(await db.execute(sql`
-      SELECT c.*,c.created_at candidate_created_at,a.updated_at application_updated_at,a.id application_id,a.job_id,a.status,a.interview_date,a.interview_summary,a.interview_raw_material,a.next_action,a.next_action_date,a.score,a.recommendation,a.evaluation_type,a.evaluation_date,a.evaluation_json,a.pre_evaluation_json,a.pre_evaluation_date,a.post_evaluation_json,a.post_evaluation_date,a.evaluation_feedback,a.proposed_engine_rule,a.proposed_engine_rule_key,a.engine_rule_status,LENGTH(COALESCE(c.cv_extracted_text,''))::int cv_text_length,j.title role,j.client
+      SELECT c.*,c.created_at candidate_created_at,a.updated_at application_updated_at,a.id application_id,a.job_id,a.status,a.interview_date,a.interview_summary,a.interview_raw_material,a.next_action,a.next_action_date,a.score,a.recommendation,a.evaluation_type,a.evaluation_date,a.evaluation_json,a.pre_evaluation_json,a.pre_evaluation_date,a.pre_human_decision,a.pre_human_decision_reason,a.pre_human_decision_date,a.post_evaluation_json,a.post_evaluation_date,a.post_human_decision,a.post_human_decision_reason,a.post_human_decision_date,a.evaluation_feedback,a.proposed_engine_rule,a.proposed_engine_rule_key,a.engine_rule_status,LENGTH(COALESCE(c.cv_extracted_text,''))::int cv_text_length,j.title role,j.client
       FROM candidates c JOIN applications a ON a.candidate_id=c.id JOIN jobs j ON j.id=a.job_id
       WHERE c.archived=false AND a.archived=false AND j.archived=false ORDER BY a.updated_at DESC
     `));
@@ -155,6 +154,7 @@ export async function POST(request: Request) {
         minYears: body.minYears != null ? Number(body.minYears) : null,
         professionalEmphasis: String(body.professionalEmphasis ?? ""),
         personalityEmphasis: String(body.personalityEmphasis ?? ""),
+        hiringManagerEmphasis: String(body.hiringManagerEmphasis ?? ""),
         internalNotes: String(body.internalNotes ?? ""),
       }).returning({ id: jobs.id });
       await writeAudit({ actorEmail: identity.email, action: "create", entityType: "job", entityId: result.id, after: body });
@@ -281,7 +281,7 @@ export async function PATCH(request: Request) {
         ["title","title"],["client","client"],["status","status"],["description","description"],
         ["mustRequirements","mustRequirements"],["preferredRequirements","preferredRequirements"],
         ["minYears","minYears"],["professionalEmphasis","professionalEmphasis"],
-        ["personalityEmphasis","personalityEmphasis"],["internalNotes","internalNotes"],
+        ["personalityEmphasis","personalityEmphasis"],["hiringManagerEmphasis","hiringManagerEmphasis"],["internalNotes","internalNotes"],
       ];
       for (const [k, col] of fields) if (k in body) updates[col] = body[k];
       if ("technologies" in body) updates.technologies = body.technologies;

@@ -13,10 +13,10 @@ const refinementSchema = {
     summary: { type: "string" },
     changes: { type: "array", items: { type: "object", additionalProperties: false, required: ["field","action","reason"], properties: { field:{type:"string"}, action:{type:"string"}, reason:{type:"string"} } } },
     questions: { type: "array", items: { type: "string" } },
-    draft: { type: "object", additionalProperties: false, required: ["title","client","description","mustRequirements","preferredRequirements","technologies","minYears","professionalEmphasis","personalityEmphasis","internalNotes"], properties: {
+    draft: { type: "object", additionalProperties: false, required: ["title","client","description","mustRequirements","preferredRequirements","technologies","minYears","professionalEmphasis","personalityEmphasis","hiringManagerEmphasis","internalNotes"], properties: {
       title:{type:"string"}, client:{type:"string"}, description:{type:"string"}, mustRequirements:{type:"string"}, preferredRequirements:{type:"string"},
       technologies:{type:"array",items:{type:"string"}}, minYears:{anyOf:[{type:"integer"},{type:"null"}]},
-      professionalEmphasis:{type:"string"}, personalityEmphasis:{type:"string"}, internalNotes:{type:"string"},
+      professionalEmphasis:{type:"string"}, personalityEmphasis:{type:"string"}, hiringManagerEmphasis:{type:"string"}, internalNotes:{type:"string"},
     }},
   },
 } as const;
