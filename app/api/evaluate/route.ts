@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   try {
     const { applicationId, reviewerFeedback } = (await request.json()) as { applicationId?: number; reviewerFeedback?: string };
     if (!applicationId) return Response.json({ error: "חסר מזהה מועמדות" }, { status: 400 });
-    if (!process.env.OPENAI_API_KEY) return Response.json({ error: "מנוע ה-AI טרם הוגדר - חסר OPENAI_API_KEY", code: "AI_NOT_CONFIGURED" }, { status: 503 });
+    if (!process.env.OPENAI_API_KEY) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
     const db = getDb();
     const rows = await db.execute(sql`

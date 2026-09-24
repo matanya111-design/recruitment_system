@@ -12,7 +12,7 @@ const cvSchema = {
   properties: {
     fullName: { type: "string" }, email: { type: "string" }, phone: { type: "string" },
     linkedinUrl: { type: "string" }, professionalTitle: { type: "string" }, company: { type: "string" },
-    yearsExperience: { type: "integer", minimum: 0 },
+    yearsExperience: { type: "integer" },
     technologies: { type: "array", items: { type: "string" } },
     experienceSummary: { type: "string" },
     uncertainties: { type: "array", items: { type: "string" } },
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   try {
     const { candidateId } = (await request.json()) as { candidateId?: number };
     if (!candidateId) return Response.json({ error: "חסר מזהה מועמד" }, { status: 400 });
-    if (!process.env.OPENAI_API_KEY) return Response.json({ error: "מנוע ה-AI טרם הוגדר - חסר OPENAI_API_KEY", code: "AI_NOT_CONFIGURED" }, { status: 503 });
+    if (!process.env.OPENAI_API_KEY) return Response.json({ error: "מנוע ה-AI טרם הוגדר", code: "AI_NOT_CONFIGURED" }, { status: 503 });
 
     const db = getDb();
     const [cand] = await db.select().from(candidates)

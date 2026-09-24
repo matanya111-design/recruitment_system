@@ -21,14 +21,14 @@ export async function generateStructured<T>(args: AiGenerateArgs): Promise<AiRes
 
   const model = process.env.OPENAI_MODEL ?? "gpt-5.6-terra";
   const reasoningEffort = args.reasoningEffort ?? (process.env.OPENAI_REASONING_EFFORT as "low" | "medium" | "high") ?? "medium";
-  // CodeMie proxy uses OpenAI-compatible /chat/completions; native OpenAI uses /responses
+  // CodeMie proxy uses /chat/completions; fallback uses native OpenAI /responses
   const baseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
   const isProxy = !!process.env.OPENAI_BASE_URL;
 
   let response: Response;
 
   if (isProxy) {
-    // Chat Completions format (OpenAI-compatible proxies: CodeMie, Azure, Anthropic via proxy)
+    // Chat Completions format (CodeMie, Azure, Anthropic, or any OpenAI-compatible proxy)
     const body = {
       model,
       messages: [
@@ -46,7 +46,7 @@ export async function generateStructured<T>(args: AiGenerateArgs): Promise<AiRes
       body: JSON.stringify(body),
     });
   } else {
-    // Native OpenAI Responses API
+    // Native OpenAI Responses API (fallback when no OPENAI_BASE_URL)
     const body: Record<string, unknown> = {
       model,
       store: false,
@@ -68,7 +68,7 @@ export async function generateStructured<T>(args: AiGenerateArgs): Promise<AiRes
 
   if (!response.ok) {
     const err = await response.text().catch(() => response.statusText);
-    throw new Error(`OpenAI API error ${response.status}: ${err}`);
+    throw new Error(`AI API error ${response.status}: ${err}`);
   }
 
   const raw = await response.json() as Record<string, unknown>;
@@ -78,7 +78,7 @@ export async function generateStructured<T>(args: AiGenerateArgs): Promise<AiRes
   const inputDetails = usage?.input_tokens_details as Record<string, unknown> | undefined;
   const cachedTokens = Number(inputDetails?.cached_tokens ?? 0);
 
-  // Support both OpenAI Responses API and Chat Completions formats
+  // Support both Chat Completions (proxy) and OpenAI Responses API formats
   let textValue: string | undefined;
   if (isProxy) {
     // Chat Completions: choices[0].message.content

@@ -6,6 +6,7 @@ import { sql, eq, and } from "drizzle-orm";
 import { jobs, candidates, applications, aiActivityLogs, aiInstructions, appUsers, evaluationRules } from "@/db/schema";
 import { EVALUATION_INSTRUCTIONS, POST_INTERVIEW_EVALUATION_INSTRUCTIONS } from "@/lib/ai/evaluation-prompt";
 import { JOB_PARSING_INSTRUCTIONS, CV_EXTRACTION_INSTRUCTIONS, INTERVIEW_SUMMARY_INSTRUCTIONS } from "@/lib/ai/prompts";
+import { TEAM_MEETING_SUMMARY_INSTRUCTIONS, TEAM_JOB_MATCH_INSTRUCTIONS, TEAM_MEMBER_ANALYSIS_INSTRUCTIONS, TEAM_EXTRACT_PROFILE_INSTRUCTIONS } from "@/lib/ai/team-prompts";
 import { deleteObject } from "@/lib/storage/client";
 
 const DEFAULTS: Record<string, string> = {
@@ -14,6 +15,10 @@ const DEFAULTS: Record<string, string> = {
   job_parsing: JOB_PARSING_INSTRUCTIONS,
   cv_extraction: CV_EXTRACTION_INSTRUCTIONS,
   interview_summary: INTERVIEW_SUMMARY_INSTRUCTIONS,
+  team_meeting_summary: TEAM_MEETING_SUMMARY_INSTRUCTIONS,
+  team_job_match: TEAM_JOB_MATCH_INSTRUCTIONS,
+  team_member_analysis: TEAM_MEMBER_ANALYSIS_INSTRUCTIONS,
+  team_extract_profile: TEAM_EXTRACT_PROFILE_INSTRUCTIONS,
 };
 
 async function seedIfEmpty() {
@@ -195,19 +200,6 @@ export async function POST(request: Request) {
         candidateId, jobId, status: "חדש", nextAction: "בדיקת קורות חיים",
       }).returning({ id: applications.id });
       return Response.json({ applicationId: app.id }, { status: 201 });
-    }
-
-    if (body.entity === "aiInstruction") {
-      const adminCheck = await requireAdmin();
-      if (adminCheck instanceof Response) return adminCheck;
-      const key = String(body.key ?? "");
-      if (!(key in DEFAULTS)) return Response.json({ error: "סוג ההוראות אינו מוכר" }, { status: 400 });
-      const content = body.reset ? DEFAULTS[key] : String(body.content ?? "").trim();
-      if (content.length < 50) return Response.json({ error: "ההוראות קצרות מדי" }, { status: 400 });
-      const [before] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, key));
-      await db.update(aiInstructions).set({ content, isCustom: !body.reset, updatedAt: new Date() }).where(eq(aiInstructions.key, key));
-      await writeAudit({ actorEmail: identity.email, action: body.reset ? "reset_instruction" : "update_instruction", entityType: "ai_instruction", entityId: key, before: before?.content, after: content });
-      return Response.json({ ok: true });
     }
 
     if (body.entity === "appUser") {

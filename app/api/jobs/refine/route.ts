@@ -13,7 +13,7 @@ const refinementSchema = {
     questions: { type: "array", items: { type: "string" } },
     draft: { type: "object", additionalProperties: false, required: ["title","client","description","mustRequirements","preferredRequirements","technologies","minYears","professionalEmphasis","personalityEmphasis","internalNotes"], properties: {
       title:{type:"string"}, client:{type:"string"}, description:{type:"string"}, mustRequirements:{type:"string"}, preferredRequirements:{type:"string"},
-      technologies:{type:"array",items:{type:"string"}}, minYears:{anyOf:[{type:"integer",minimum:0},{type:"null"}]},
+      technologies:{type:"array",items:{type:"string"}}, minYears:{anyOf:[{type:"integer"},{type:"null"}]},
       professionalEmphasis:{type:"string"}, personalityEmphasis:{type:"string"}, internalNotes:{type:"string"},
     }},
   },

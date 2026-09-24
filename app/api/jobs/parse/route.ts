@@ -13,7 +13,7 @@ const jobDraftSchema = {
     title: { type: "string" }, client: { type: "string" }, description: { type: "string" },
     mustRequirements: { type: "string" }, preferredRequirements: { type: "string" },
     technologies: { type: "array", items: { type: "string" } },
-    minYears: { anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }] },
+    minYears: { anyOf: [{ type: "integer" }, { type: "null" }] },
     professionalEmphasis: { type: "string" }, personalityEmphasis: { type: "string" },
     internalNotes: { type: "string" }, uncertainties: { type: "array", items: { type: "string" } },
   },

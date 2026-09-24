@@ -496,6 +496,7 @@ export default function Home() {
                 goCandidate={goCandidate}
                 back={() => setView("jobs")}
                 addCandidate={() => setModal("candidate")}
+                refresh={() => load(true)}
               edit={() => setModal("editJob")}
               remove={async () => {
                 if (selectedJob.candidates > 0) {
@@ -955,6 +956,7 @@ function JobPage({
   edit,
   archive,
   remove,
+  refresh,
 }: {
   job: Job;
   candidates: Candidate[];
@@ -964,7 +966,32 @@ function JobPage({
   edit: () => void;
   archive: () => void;
   remove: () => void;
+  refresh: () => void;
 }) {
+  const [scanning, setScanning] = useState(false);
+  const [scanResults, setScanResults] = useState<{ results: ScanMatch[]; scanned: number } | null>(null);
+  const [scanError, setScanError] = useState("");
+
+  async function runScan() {
+    setScanning(true);
+    setScanError("");
+    setScanResults(null);
+    try {
+      const r = await fetch("/api/jobs/scan-candidates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "הסריקה נכשלה");
+      setScanResults(d);
+    } catch (e) {
+      setScanError(e instanceof Error ? e.message : "הסריקה נכשלה");
+    } finally {
+      setScanning(false);
+    }
+  }
+
   return (
     <>
       <button className="crumb" onClick={back}>
@@ -982,6 +1009,9 @@ function JobPage({
             </span>
             <button className="secondary" onClick={edit}>
               עריכת משרה
+            </button>
+            <button className="secondary" onClick={runScan} disabled={scanning}>
+              {scanning ? "סורק מועמדים..." : "✦ סריקת מועמדים קיימים"}
             </button>
             <button className="archive-button" onClick={archive}>
               ארכיון
@@ -1066,7 +1096,148 @@ function JobPage({
         </div>
         <CandidateTable rows={candidates} go={goCandidate} />
       </section>
+      {scanError && <div className="cv-message error">{scanError}</div>}
+      {scanResults && (
+        <ScanResultsModal
+          jobId={job.id}
+          jobTitle={job.title}
+          results={scanResults.results}
+          scanned={scanResults.scanned}
+          close={() => setScanResults(null)}
+          onAdded={() => { setScanResults(null); refresh(); }}
+        />
+      )}
     </>
+  );
+}
+
+type ScanMatch = { candidateId: number; name: string; score: number; fit_label: string; bottom_line: string; strengths: string[]; gaps: string[]; alreadyLinked: boolean; archivedApplicationId: number | null };
+
+function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }: {
+  jobId: number;
+  jobTitle: string;
+  results: ScanMatch[];
+  scanned: number;
+  close: () => void;
+  onAdded: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  function toggle(id: number) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function addSelected() {
+    const toAdd = results.filter(m => selected.has(m.candidateId) && !m.alreadyLinked);
+    if (toAdd.length === 0) return;
+    setSaving(true);
+    setSaveError("");
+    try {
+      await Promise.all(toAdd.map(async (m) => {
+        if (m.archivedApplicationId) {
+          // Restore archived application
+          const r = await fetch("/api/recruiting", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entity: "application", id: m.archivedApplicationId, archived: 0 }),
+          });
+          if (!r.ok) { const d = await r.json(); throw new Error(d.error || "שגיאה"); }
+        } else {
+          // Create new application
+          const r = await fetch("/api/recruiting", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entity: "application", candidateId: m.candidateId, jobId }),
+          });
+          if (!r.ok) { const d = await r.json(); throw new Error(d.error || "שגיאה"); }
+        }
+      }));
+      onAdded();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "שגיאה בהוספת מועמדים");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const newToAdd = results.filter(m => selected.has(m.candidateId) && !m.alreadyLinked);
+
+  return (
+    <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) close(); }}>
+      <section className="modal panel scan-modal">
+        <div className="modal-head">
+          <h2>✦ סריקת מועמדים — {jobTitle}</h2>
+          <button onClick={close}>×</button>
+        </div>
+        <p className="scan-modal-subtitle">
+          נסרקו {scanned} מועמדים — <strong>{results.length}</strong> עם ציון 60 ומעלה.
+          {results.length > 0 && " סמן את המועמדים שברצונך להוסיף למשרה."}
+        </p>
+        {results.length === 0 ? (
+          <p style={{ padding: "20px 24px", color: "var(--muted)" }}>לא נמצאו מועמדים עם ציון 60 ומעלה.</p>
+        ) : (
+          <div className="scan-results-list">
+            {results.map(m => (
+              <div
+                key={m.candidateId}
+                className={`scan-candidate-card${selected.has(m.candidateId) ? " selected" : ""}${m.alreadyLinked ? " already-linked" : ""}`}
+                onClick={() => !m.alreadyLinked && toggle(m.candidateId)}
+              >
+                <div className="scan-card-top">
+                  {!m.alreadyLinked && (
+                    <input
+                      type="checkbox"
+                      checked={selected.has(m.candidateId)}
+                      onChange={() => toggle(m.candidateId)}
+                      onClick={e => e.stopPropagation()}
+                    />
+                  )}
+                  <strong className="scan-card-name">{m.name}</strong>
+                  <div className="scan-card-badges">
+                    <b className={`score-text ${m.score >= 75 ? "" : "reasonable-score"}`}>{m.score}</b>
+                    <span className={`pill ${m.fit_label === "מתאים" ? "success" : m.fit_label === "מתאים חלקית" ? "warning" : "neutral"}`}>
+                      {m.fit_label}
+                    </span>
+                    {m.alreadyLinked && <span className="pill success">משויך</span>}
+                    {!m.alreadyLinked && m.archivedApplicationId && <span className="pill neutral">בארכיון</span>}
+                  </div>
+                </div>
+                <p className="scan-card-bottomline">{m.bottom_line}</p>
+                <div className="scan-card-details">
+                  {m.strengths.length > 0 && (
+                    <div className="scan-card-col">
+                      <div className="scan-col-label green">✓ נקודות חוזק</div>
+                      <ul>{m.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul>
+                    </div>
+                  )}
+                  {m.gaps.length > 0 && (
+                    <div className="scan-card-col">
+                      <div className="scan-col-label red">✗ פערים / שאלות</div>
+                      <ul>{m.gaps.map((g, i) => <li key={i}>{g}</li>)}</ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {saveError && <div className="cv-message error" style={{ margin: "0 24px 8px" }}>{saveError}</div>}
+        <div className="form-actions scan-modal-footer">
+          <button className="secondary" onClick={close}>סגור</button>
+          {newToAdd.length > 0 && (
+            <button className="primary" disabled={saving} onClick={addSelected}>
+              {saving ? "מוסיף..." : `✦ הוסף ${newToAdd.length} מועמד${newToAdd.length > 1 ? "ים" : ""} למשרה`}
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2525,7 +2696,7 @@ function JobForm({
           {!refinement ? (
             <>
               <textarea value={raw} onChange={(e) => setRaw(e.target.value)} placeholder="הדבק כאן את התמלול או ההבהרות החדשות..." autoFocus />
-              <div className="privacy-note">הטקסט יישלח ל-OpenAI לצורך השוואה מול פרטי המשרה. אל תכלול מידע אישי שאינו נחוץ.</div>
+              <div className="privacy-note">הטקסט יישלח ל-CodeMie לצורך השוואה מול פרטי המשרה. אל תכלול מידע אישי שאינו נחוץ.</div>
               {parseError && <div className="cv-message error">{parseError}</div>}
               <div className="form-actions">
                 <button type="button" className="secondary" onClick={() => setMode("manual")}>חזרה לעריכה</button>
@@ -2563,7 +2734,7 @@ function JobForm({
             autoFocus
           />
           <div className="privacy-note">
-            הטקסט יישלח ל-OpenAI לצורך ארגון המשרה. אל תכלול מידע אישי שאינו
+            הטקסט יישלח ל-CodeMie לצורך ארגון המשרה. אל תכלול מידע אישי שאינו
             נחוץ.
           </div>
           {parseError && <div className="cv-message error">{parseError}</div>}
@@ -3030,7 +3201,7 @@ function AiActivityPage({ rows: rawRows }: { rows: AiActivity[] }) {
         <article className="stat-card"><div className="stat-icon blue">#</div><div><strong>{tokens.toLocaleString("he-IL")}</strong><span>טוקנים</span><small>קלט ופלט יחד</small></div></article>
       </section>
       <section className="panel table-panel">
-        <div className="panel-head padded"><div><h2>יומן פעולות</h2><p>החיוב הרשמי מופיע בחשבון OpenAI. הסכומים כאן הם אומדן.</p></div></div>
+        <div className="panel-head padded"><div><h2>יומן פעולות</h2><p>החיוב הרשמי מופיע בחשבון CodeMie. הסכומים כאן הם אומדן.</p></div></div>
         <div className="table-wrap">
           <table><thead><tr>
             <th><SH k="createdAt">תאריך</SH></th>
@@ -3248,7 +3419,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
   onEdit: () => void; onDelete: () => void; onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"timeline"|"meeting"|"insight">("timeline");
+  const [tab, setTab] = useState<"timeline"|"meeting"|"insight"|"promote">("timeline");
   const [meetings, setMeetings] = useState<TeamMeeting[]>([]);
   const [meetingsLoaded, setMeetingsLoaded] = useState(false);
   const [transcript, setTranscript] = useState(""), [meetingDate, setMeetingDate] = useState(() => new Date().toISOString().slice(0,16));
@@ -3353,7 +3524,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
       </div>
 
       <div className="tabs" style={{marginTop:0,marginBottom:12}}>
-        {([["timeline","ציר זמן"],["meeting","פגישה חדשה"],["insight","✦ התאמת משרות + ניתוח AI"]] as const).map(([k,l])=>(
+        {([["timeline","ציר זמן"],["meeting","פגישה חדשה"],["insight","✦ התאמת משרות + ניתוח AI"],["promote","✦ קידום כמועמד"]] as const).map(([k,l])=>(
           <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{l}</button>
         ))}
       </div>
@@ -3481,8 +3652,110 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
           )}
         </div>
       )}
+      {tab==="promote" && <PromoteTab member={member} jobs={jobs} />}
       </>}
     </section>
+  );
+}
+
+function PromoteTab({ member, jobs }: { member: TeamMember; jobs: Job[] }) {
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<number>>(new Set());
+  const [promoting, setPromoting] = useState(false);
+  const [result, setResult] = useState<{ candidateId: number; results: Array<{ jobId: number; action: string }> } | null>(null);
+  const [err, setErr] = useState("");
+
+  function toggle(id: number) {
+    setSelectedJobIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+
+  async function promote() {
+    if (!selectedJobIds.size) return;
+    setPromoting(true); setErr(""); setResult(null);
+    try {
+      const r = await fetch("/api/team/promote-to-candidate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberId: member.id, jobIds: Array.from(selectedJobIds) }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "שגיאה");
+      setResult(d);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "שגיאה");
+    } finally {
+      setPromoting(false);
+    }
+  }
+
+  if (result) {
+    const created = result.results.filter(r => r.action === "created").length;
+    const skipped = result.results.filter(r => r.action === "skipped").length;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="cv-message success">
+          <b>✓ {member.name} קודם/ה בהצלחה כמועמד/ת!</b>
+          <div style={{ fontSize: 13, marginTop: 4 }}>
+            {created > 0 && <div>נוצרו {created} מועמדויות חדשות.</div>}
+            {skipped > 0 && <div style={{ color: "var(--muted)" }}>{skipped} מועמדויות כבר קיימות — לא שוכפלו.</div>}
+          </div>
+        </div>
+        {result.results.map(r => {
+          const j = jobs.find(j => j.id === r.jobId);
+          return (
+            <div key={r.jobId} style={{ fontSize: 13, display: "flex", gap: 8, alignItems: "center" }}>
+              <span className={`pill ${r.action === "created" ? "success" : "neutral"}`}>{r.action === "created" ? "נוצר" : "קיים"}</span>
+              <span>{j?.title ?? `משרה ${r.jobId}`} · {j?.client ?? ""}</span>
+            </div>
+          );
+        })}
+        <button className="secondary" style={{ width: "fit-content", marginTop: 4 }} onClick={() => { setResult(null); setSelectedJobIds(new Set()); }}>
+          קידום נוסף
+        </button>
+      </div>
+    );
+  }
+
+  const activeJobs = jobs.filter(j => j.status === "פעילה");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ background: "#f8f7ff", border: "1px solid #dcd7fa", borderRadius: 9, padding: 12, fontSize: 13, color: "#58506f" }}>
+        <b>מה קורה כשמקדמים עובד כמועמד?</b>
+        <div style={{ marginTop: 6, lineHeight: 1.7 }}>
+          ה-AI ייצור כרטיס מועמד מתוך הפרופיל וסיכומי הפגישות של {member.name}.
+          אם כרטיס על שם זה כבר קיים — יעודכן. המועמד יצורף למשרות שבחרת וימצא בטאב <b>מועמדים</b>.
+        </div>
+      </div>
+      {activeJobs.length === 0 ? (
+        <p style={{ color: "var(--muted)", fontSize: 13 }}>אין משרות פעילות כרגע.</p>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 2 }}>בחר משרות לשיוך:</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {activeJobs.map(j => (
+              <label key={j.id} style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={selectedJobIds.has(j.id)}
+                  onChange={() => toggle(j.id)}
+                />
+                <span><b>{j.title}</b> · {j.client}</span>
+              </label>
+            ))}
+          </div>
+          {err && <div className="cv-message error">{err}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="ai-button"
+              disabled={promoting || selectedJobIds.size === 0}
+              onClick={promote}
+            >
+              {promoting ? "מייצר כרטיס מועמד..." : `✦ קדם כמועמד ב-${selectedJobIds.size || "..."} משרות`}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
