@@ -59,7 +59,7 @@ export async function POST(request: Request) {
       input,
       schemaName: "general_reply",
       jsonSchema: replySchema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
 
     const cost = estimateCost(result.model, result.usage);

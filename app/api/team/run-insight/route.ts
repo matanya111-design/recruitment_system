@@ -74,7 +74,7 @@ export async function POST(request: Request) {
       input: `עובד: ${member.name}\n\nפרופיל וסיכומי פגישות:\n${context}\n\nמשרות פעילות:\n${jobsList}`,
       schemaName: "team_job_match",
       jsonSchema: jobMatchSchema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     }),
     generateStructured<{ strengths: string[]; gaps: string[]; growth_recommendation: string; next_steps: string[] }>({
       operation: "team_member_analysis",
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
       input: `עובד: ${member.name}\n\nפרופיל וסיכומי פגישות:\n${context}`,
       schemaName: "member_analysis",
       jsonSchema: analyzeSchema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     }),
   ]);
 

@@ -39,7 +39,7 @@ export async function POST(request: Request) {
       input: `חומר הגלם למשרה:\n\n${source}`,
       schemaName: "job_draft",
       jsonSchema: jobDraftSchema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
 
     const cost = estimateCost(result.model, result.usage);

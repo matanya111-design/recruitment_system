@@ -46,7 +46,7 @@ export async function POST(request: Request) {
       input: `פרטים קיימים בכרטיס (לשימוש כגיבוי בלבד):\n${JSON.stringify({ fullName: cand.fullName, email: cand.email, phone: cand.phone, linkedinUrl: cand.linkedinUrl })}\n\nטקסט קורות החיים:\n${cand.cvExtractedText.slice(0, 150000)}`,
       schemaName: "candidate_cv_details",
       jsonSchema: cvSchema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
 
     const parsed = result.data;

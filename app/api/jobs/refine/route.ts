@@ -45,7 +45,7 @@ export async function POST(request: Request) {
       input: `המשרה הקיימת:\n${JSON.stringify(body.job, null, 2)}\n\nהמידע החדש:\n${source}`,
       schemaName: "job_refinement",
       jsonSchema: refinementSchema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
 
     const cost = estimateCost(result.model, result.usage);

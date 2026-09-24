@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     input,
     schemaName: "team_member_candidate_profile",
     jsonSchema: profileSchema,
-    reasoningEffort: "low",
+    reasoningEffort: "medium",
   });
 
   const profile = result.data;

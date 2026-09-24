@@ -108,7 +108,7 @@ export async function POST(request: Request) {
       input: `תמלול/הערות הפגישה:\n${body.transcript}`,
       schemaName: "meeting_summary",
       jsonSchema: meetingSummarySchema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
 
     const cost = estimateCost(result.model, result.usage);
@@ -153,7 +153,7 @@ export async function POST(request: Request) {
       input,
       schemaName: "team_job_match",
       jsonSchema: jobMatchSchema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
 
     const cost = estimateCost(result.model, result.usage);
@@ -193,7 +193,7 @@ export async function POST(request: Request) {
       input: `עובד: ${body.memberName}\n\nסיכומי פגישות:\n${body.memberNotes || "אין סיכומים עדיין"}`,
       schemaName: "member_analysis",
       jsonSchema: analyzeSchema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
 
     const cost = estimateCost(result.model, result.usage);

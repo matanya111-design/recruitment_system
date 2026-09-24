@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       input: `${nameHint ? `רמז לשם: ${nameHint}\n\n` : ""}טקסט גולמי:\n${text}`,
       schemaName: "team_profile_extraction",
       jsonSchema: schema,
-      reasoningEffort: "low",
+      reasoningEffort: "medium",
     });
 
     const cost = estimateCost(result.model, result.usage);
