@@ -226,21 +226,13 @@ export async function PATCH(request: Request) {
     const id = Number(body.id);
 
     if (body.entity === "application") {
-      if (body.engineRuleDecision === "approve" || body.engineRuleDecision === "reject") {
-        const [app] = await db.select({ proposedEngineRule: applications.proposedEngineRule, proposedEngineRuleKey: applications.proposedEngineRuleKey }).from(applications).where(eq(applications.id, id));
+      // Approving is handled by POST /api/engine-rule instead (it reviews an AI-generated merge
+      // proposal with the user before saving anything) — this stays for the immediate "reject" path.
+      if (body.engineRuleDecision === "reject") {
+        const [app] = await db.select({ proposedEngineRule: applications.proposedEngineRule }).from(applications).where(eq(applications.id, id));
         if (!app?.proposedEngineRule) return Response.json({ error: "לא נמצאה הצעה רוחבית" }, { status: 404 });
-        if (body.engineRuleDecision === "approve") {
-          // Approving appends the learned rule directly to the specific prompt that produced it,
-          // so the change is visible and editable right there in "הוראות AI" — not a separate,
-          // invisible list applied behind the scenes.
-          const targetKey = app.proposedEngineRuleKey || "candidate_evaluation";
-          const [inst] = await db.select({ content: aiInstructions.content }).from(aiInstructions).where(eq(aiInstructions.key, targetKey));
-          const baseContent = inst?.content ?? DEFAULTS[targetKey] ?? "";
-          const updatedContent = `${baseContent}\n\nכלל שנלמד ואושר בעקבות משוב מקצועי:\n${app.proposedEngineRule}`;
-          await db.update(aiInstructions).set({ content: updatedContent, isCustom: true, updatedAt: new Date() }).where(eq(aiInstructions.key, targetKey));
-        }
-        await db.update(applications).set({ engineRuleStatus: body.engineRuleDecision === "approve" ? "אושר ככלל קבוע" : "נדחה", updatedAt: new Date() }).where(eq(applications.id, id));
-        await writeAudit({ actorEmail: identity.email, action: `engine_rule_${body.engineRuleDecision}`, entityType: "application", entityId: id });
+        await db.update(applications).set({ engineRuleStatus: "נדחה", updatedAt: new Date() }).where(eq(applications.id, id));
+        await writeAudit({ actorEmail: identity.email, action: "engine_rule_reject", entityType: "application", entityId: id });
         return Response.json({ ok: true });
       }
 

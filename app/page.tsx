@@ -2515,7 +2515,7 @@ function Evaluation({
         <EvaluationChatPanel c={c} mode={mode} running={running} run={run} />
         <InterviewQuestionsPanel c={c} refresh={refresh} pe={pe} />
         {c.proposedEngineRule && c.engineRuleStatus !== "ללא הצעה" && (
-          <EngineRulePanel c={c} ruleUpdating={ruleUpdating} decideRule={decideRule} />
+          <EngineRulePanel c={c} ruleUpdating={ruleUpdating} decideRule={decideRule} refresh={refresh} />
         )}
       </div>
     );
@@ -2605,7 +2605,7 @@ function Evaluation({
       </section>
       <EvaluationChatPanel c={c} mode={mode} running={running} run={run} />
       {c.proposedEngineRule && c.engineRuleStatus !== "ללא הצעה" && (
-        <EngineRulePanel c={c} ruleUpdating={ruleUpdating} decideRule={decideRule} />
+        <EngineRulePanel c={c} ruleUpdating={ruleUpdating} decideRule={decideRule} refresh={refresh} />
       )}
     </div>
   );
@@ -2702,24 +2702,135 @@ function EngineRulePanel({
   c,
   ruleUpdating,
   decideRule,
+  refresh,
 }: {
   c: Candidate;
   ruleUpdating: boolean;
   decideRule: (decision: "approve" | "reject") => Promise<void>;
+  refresh: () => Promise<void>;
 }) {
   const targetTitle = instructionDefinitions.find((d) => d.key === c.proposedEngineRuleKey)?.title || "הוראת ההערכה הרלוונטית";
+  const [reviewing, setReviewing] = useState(false);
+  const [loadingProposal, setLoadingProposal] = useState(false);
+  const [proposal, setProposal] = useState<{ mergedContent: string; changesSummary: string[] } | null>(null);
+  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const [refineInput, setRefineInput] = useState("");
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState("");
+
+  async function proposeMerge(history: Array<{ role: "user" | "assistant"; text: string }>) {
+    setLoadingProposal(true);
+    setError("");
+    try {
+      const r = await fetch("/api/engine-rule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: c.applicationId, action: "propose", messages: history }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "יצירת ההצעה נכשלה");
+      setProposal({ mergedContent: d.mergedContent, changesSummary: d.changesSummary || [] });
+      return d.changesSummary as string[];
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "יצירת ההצעה נכשלה");
+      return null;
+    } finally {
+      setLoadingProposal(false);
+    }
+  }
+
+  async function openReview() {
+    setReviewing(true);
+    if (!proposal) await proposeMerge([]);
+  }
+
+  async function sendRefinement() {
+    if (!refineInput.trim()) return;
+    const userMsg = refineInput.trim();
+    setRefineInput("");
+    const newMessages = [...messages, { role: "user" as const, text: userMsg }];
+    setMessages(newMessages);
+    const changesSummary = await proposeMerge(newMessages);
+    if (changesSummary) {
+      setMessages((prev) => [...prev, { role: "assistant", text: changesSummary.length ? `עדכנתי את ההצעה:\n${changesSummary.map((s) => `- ${s}`).join("\n")}` : "עדכנתי את ההצעה." }]);
+    }
+  }
+
+  async function applyMerge() {
+    if (!proposal) return;
+    setApplying(true);
+    setError("");
+    try {
+      const r = await fetch("/api/engine-rule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: c.applicationId, action: "apply", mergedContent: proposal.mergedContent }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "החלת השינוי נכשלה");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "החלת השינוי נכשלה");
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  function cancelReview() {
+    setReviewing(false);
+    setProposal(null);
+    setMessages([]);
+    setError("");
+  }
+
   return (
     <section className="panel content-card engine-rule-card">
       <h2>הצעה לעדכון פרומפט ההערכה</h2>
       <p>{c.proposedEngineRule}</p>
       {c.engineRuleStatus === "ממתין לאישור" ? (
-        <div className="feedback-actions">
-          <small>אישור יוסיף את הכלל ישירות לטקסט הפרומפט &quot;{targetTitle}&quot; בטאב &quot;הוראות AI&quot; — תוכל לראות ולערוך אותו שם.</small>
-          <div className="rule-buttons">
-            <button className="secondary" disabled={ruleUpdating} onClick={() => decideRule("reject")}>דחייה</button>
-            <button className="primary" disabled={ruleUpdating} onClick={() => decideRule("approve")}>אישור ככלל קבוע</button>
+        !reviewing ? (
+          <div className="feedback-actions">
+            <small>לפני שהכלל נשמר, ה-AI יציע איך לשלב אותו בתוך טקסט הפרומפט &quot;{targetTitle}&quot; (לא רק להוסיף בסוף) — ותוכל לדון ולחדד את ההצעה לפני שהיא נשמרת.</small>
+            <div className="rule-buttons">
+              <button className="secondary" disabled={ruleUpdating} onClick={() => decideRule("reject")}>דחייה</button>
+              <button className="primary" disabled={ruleUpdating} onClick={openReview}>הצג הצעת שינוי</button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="rule-review">
+            {loadingProposal && !proposal && <small>ה-AI מכין הצעה לשילוב הכלל בתוך הפרומפט...</small>}
+            {proposal && (
+              <>
+                <div className="rule-review-summary">
+                  <b>מה ישתנה בפרומפט &quot;{targetTitle}&quot; ולמה:</b>
+                  <ul>
+                    {proposal.changesSummary.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                </div>
+                <details className="rule-review-preview">
+                  <summary>תצוגה מלאה של הפרומפט המוצע לאחר השילוב</summary>
+                  <pre>{proposal.mergedContent}</pre>
+                </details>
+              </>
+            )}
+            {messages.length > 0 && (
+              <div className="email-chat-history">
+                {messages.map((m, i) => (
+                  <div key={i} className={`email-chat-msg ${m.role}`}><pre>{m.text}</pre></div>
+                ))}
+              </div>
+            )}
+            <div className="email-chat-input">
+              <textarea value={refineInput} onChange={(e) => setRefineInput(e.target.value)} placeholder='רוצה לחדד את השילוב? למשל: "שלב את זה גם בפסקה על ניסיון ב-DevOps" / "אל תשנה את הניסוח של הפער הקריטי"' rows={2} disabled={loadingProposal} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendRefinement(); }} />
+              <button className="ai-button" disabled={loadingProposal || !refineInput.trim()} onClick={sendRefinement}>{loadingProposal ? "מעדכן..." : "✦ שליחה"}</button>
+            </div>
+            {error && <div className="cv-message error">{error}</div>}
+            <div className="rule-buttons">
+              <button className="secondary" disabled={applying} onClick={cancelReview}>ביטול</button>
+              <button className="primary" disabled={applying || !proposal || loadingProposal} onClick={applyMerge}>{applying ? "משלב..." : "אישור והטמעה בפרומפט"}</button>
+            </div>
+          </div>
+        )
       ) : (
         <span className={`pill ${c.engineRuleStatus.includes("אושר") ? "success" : "neutral"}`}>{c.engineRuleStatus}</span>
       )}

@@ -120,31 +120,48 @@ export async function POST(request: Request) {
           const recommendationText = String(evaluation.decision ?? "");
           const needsClarification = !isPost && evaluation.decision === "בירור קצר לפני ראיון";
 
-          await db.update(applications).set({
-            // "Current status" columns — reflect whichever type ran most recently, used by
-            // dashboards/list views that need one status per application.
-            score,
-            recommendation: recommendationText,
-            evaluationType,
-            evaluationDate: new Date(),
-            evaluationJson: evaluation,
-            // Dedicated pre/post slots — never overwritten by the other type, so each tab always
-            // shows its own last result independently.
-            ...(isPost
-              ? { postEvaluationJson: evaluation, postScore: score, postRecommendation: recommendationText, postEvaluationDate: new Date() }
-              : { preEvaluationJson: evaluation, preScore: score, preRecommendation: recommendationText, preEvaluationDate: new Date() }),
-            evaluationFeedback: feedback,
-            proposedEngineRule: feedback && evaluation.generalizable_feedback ? String(evaluation.proposed_engine_rule ?? "") : "",
-            // Records which prompt produced the proposal, so approving it can append the rule
-            // directly to that specific prompt's own text instead of a separate global list.
-            proposedEngineRuleKey: feedback && evaluation.generalizable_feedback && evaluation.proposed_engine_rule ? instructionKey : "",
-            engineRuleStatus: feedback && evaluation.generalizable_feedback && evaluation.proposed_engine_rule ? "ממתין לאישור" : "ללא הצעה",
-            nextAction: isPost ? "קבלת החלטה ועדכון סטטוס" : "תיאום או ביצוע ראיון מקצועי",
-            updatedAt: new Date(),
-          }).where(eq(applications.id, applicationId));
+          // A malformed/incomplete AI response (e.g. a missing or non-numeric score) must not reach
+          // Postgres — writing NaN into an integer column fails with a raw driver error that would
+          // otherwise leak straight to the client.
+          if (!Number.isFinite(score)) {
+            controller.enqueue(ndjson({ type: "error", message: "ה-AI החזיר תוצאה לא תקינה (ציון חסר או שגוי). נסה להריץ את ההערכה שוב." }));
+            controller.close();
+            return;
+          }
 
-          if (needsClarification) {
-            await db.execute(sql`UPDATE applications SET status=CASE WHEN status IN ('חדש','בבדיקה') THEN 'דורש בירור' ELSE status END WHERE id=${applicationId}`);
+          try {
+            await db.update(applications).set({
+              // "Current status" columns — reflect whichever type ran most recently, used by
+              // dashboards/list views that need one status per application.
+              score,
+              recommendation: recommendationText,
+              evaluationType,
+              evaluationDate: new Date(),
+              evaluationJson: evaluation,
+              // Dedicated pre/post slots — never overwritten by the other type, so each tab always
+              // shows its own last result independently.
+              ...(isPost
+                ? { postEvaluationJson: evaluation, postScore: score, postRecommendation: recommendationText, postEvaluationDate: new Date() }
+                : { preEvaluationJson: evaluation, preScore: score, preRecommendation: recommendationText, preEvaluationDate: new Date() }),
+              evaluationFeedback: feedback,
+              proposedEngineRule: feedback && evaluation.generalizable_feedback ? String(evaluation.proposed_engine_rule ?? "") : "",
+              // Records which prompt produced the proposal, so approving it can append the rule
+              // directly to that specific prompt's own text instead of a separate global list.
+              proposedEngineRuleKey: feedback && evaluation.generalizable_feedback && evaluation.proposed_engine_rule ? instructionKey : "",
+              engineRuleStatus: feedback && evaluation.generalizable_feedback && evaluation.proposed_engine_rule ? "ממתין לאישור" : "ללא הצעה",
+              nextAction: isPost ? "קבלת החלטה ועדכון סטטוס" : "תיאום או ביצוע ראיון מקצועי",
+              updatedAt: new Date(),
+            }).where(eq(applications.id, applicationId));
+
+            if (needsClarification) {
+              await db.execute(sql`UPDATE applications SET status=CASE WHEN status IN ('חדש','בבדיקה') THEN 'דורש בירור' ELSE status END WHERE id=${applicationId}`);
+            }
+          } catch (dbError) {
+            // Never forward a raw driver/SQL error (query text + bound params) to the client.
+            console.error("Evaluate DB write failed:", dbError);
+            controller.enqueue(ndjson({ type: "error", message: "ההערכה הופקה אך שמירתה בבסיס הנתונים נכשלה. נסה שוב בעוד רגע." }));
+            controller.close();
+            return;
           }
 
           const cost = estimateCost(finalResult.model, finalResult.usage);
