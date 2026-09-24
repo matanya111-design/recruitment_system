@@ -31,7 +31,7 @@ type ProfileResult = {
 export async function POST(request: Request) {
   const identity = await requireAppIdentity();
   if (identity instanceof Response) return identity;
-
+  try {
   const { memberId, jobIds } = (await request.json()) as { memberId?: number; jobIds?: number[] };
   if (!memberId) return Response.json({ error: "חסר מזהה עובד" }, { status: 400 });
   if (!jobIds?.length) return Response.json({ error: "יש לבחור לפחות משרה אחת" }, { status: 400 });
@@ -145,4 +145,8 @@ export async function POST(request: Request) {
   });
 
   return Response.json({ candidateId, results, profile });
+  } catch (error) {
+    console.error("promote-to-candidate error:", error);
+    return Response.json({ error: error instanceof Error ? error.message : "קידום המועמד נכשל" }, { status: 500 });
+  }
 }

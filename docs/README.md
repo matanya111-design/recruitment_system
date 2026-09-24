@@ -1,6 +1,6 @@
 # מערכת ניהול והערכת מועמדים — NAYA Tech Recruitment System
 
-> גרסה: 2.1 | Branch: `dev` | עודכן: ספטמבר 2026
+> גרסה: 2.3 | Branch: `dev` | עודכן: ספטמבר 2026
 
 ## מה זה?
 
@@ -15,7 +15,7 @@
 | Database | PostgreSQL 16 via Drizzle ORM |
 | Storage | MinIO (dev) / AWS S3-compatible (prod) |
 | Auth | iron-session cookie + DB allowlist |
-| AI | CodeMie Proxy (claude-sonnet-4-6) / OpenAI Responses API |
+| AI | CodeMie Proxy (claude-sonnet-4-6) — כל קריאות AI ב-`reasoningEffort: medium` |
 | Container | Docker Compose עם `restart: unless-stopped` |
 
 ## חיבור AI
@@ -55,13 +55,16 @@ recruitment_system/
 │   │   │   └── ai/             # חילוץ AI
 │   │   ├── evaluate/           # הערכת AI (pre + post interview)
 │   │   ├── interview/summarize/ # סיכום ראיון AI
-│   │   ├── jobs/parse/ & refine/ # יצירת משרה מטקסט
-│   │   ├── ai-chat/            # המשך שיח עם AI על מייל גיוס
-│   │   ├── ai-general/         # שאילתות AI כלליות
-│   │   ├── team/               # CRUD ניהול צוות
+│   │   ├── jobs/parse/         # יצירת משרה מטקסט חופשי באמצעות AI
+│   │   ├── jobs/refine/        # עדכון משרה קיימת לפי מידע חדש (תמלול, מייל)
+│   │   ├── jobs/scan-candidates/ # סריקת כל מועמדי המאגר מול משרה — מחזיר ציון+הסבר לכל אחד
+│   │   ├── ai-chat/            # המשך שיח עם AI על מייל גיוס של מועמד ספציפי
+│   │   ├── ai-general/         # שאילתות AI חופשיות על נתוני המערכת
+│   │   ├── team/               # CRUD ניהול עובדי צוות
 │   │   │   ├── meetings/       # פגישות 1:1 — שמירה, סיכום AI, ניתוח, matching
 │   │   │   ├── run-insight/    # סקירת AI מלאה (server-side, parallel, DB-saved)
-│   │   │   └── extract-profile/ # חילוץ פרופיל עובד מטקסט גולמי
+│   │   │   ├── extract-profile/ # חילוץ פרופיל עובד מטקסט גולמי
+│   │   │   └── promote-to-candidate/ # קידום עובד כמועמד — יוצר כרטיס מועמד + שיוך למשרות
 │   │   └── health/             # live + ready health checks
 │   ├── page.tsx                # SPA React (UI מלא)
 │   ├── layout.tsx              # HTML root
@@ -96,7 +99,7 @@ recruitment_system/
 ├── docs/                       # תיעוד
 │   ├── README.md               # מסמך זה
 │   ├── spec-he.md              # מפרט מקורי מלא (עברית)
-│   └── source-v37.zip          # קוד מקור המערכת המקורית
+│   └── starting_command.md     # הוראות הפעלה יומיומיות (CodeMie proxy + Docker + dev)
 │
 ├── docker-compose.yml          # postgres + minio + minio-init + web (restart: unless-stopped)
 ├── Dockerfile                  # Multi-stage build (non-root)
@@ -202,7 +205,7 @@ npm run db:migrate   # הרצת migrations
 | מדריך | הסבר מעשי על זרימת העבודה (מעודכן) |
 | פעילות AI | יומן קריאות AI + עלות משוערת, מיון לפי כל שדה |
 | שאילתות AI | שאל כל שאלה על המערכת |
-| ניהול צוות | רשימה מתקפלת — לכל עובד: ציר זמן פגישות, פגישה חדשה + AI summary, התאמת משרות + ניתוח AI (שמור ב-DB, רץ ברקע) |
+| ניהול צוות | רשימה מתקפלת — לכל עובד: ציר זמן פגישות, פגישה חדשה + AI summary, התאמת משרות + ניתוח AI (שמור ב-DB), **קידום כמועמד** — יוצר כרטיס מועמד ומשייך למשרות שנבחרו |
 | משתמשים | Admin בלבד — allowlist ותפקידים, "הסרת כולם חוץ ממני" |
 | הוראות AI | Admin בלבד — 9 פרומפטים ניתנים לעריכה ואיפוס |
 
@@ -284,3 +287,78 @@ Get-Content backup.sql | docker exec -i recruitment_system-postgres-1 psql -U ap
 
 - `GET /api/health/live` — האם השרת עולה
 - `GET /api/health/ready` — האם ה-DB מחובר
+
+---
+
+## מפת קבצים מלאה עם הסבר
+
+### `app/`
+| קובץ | תפקיד |
+|---|---|
+| `page.tsx` | כל ה-UI — SPA אחד: Dashboard, Jobs, Candidates, Archive, Team, AI Activity, Admin pages |
+| `layout.tsx` | HTML root — dir=rtl, metadata, global CSS import |
+| `globals.css` | כל ה-CSS: layout, components, RTL, animations, utility classes |
+
+### `app/api/`
+| קובץ | תפקיד |
+|---|---|
+| `auth/login/route.ts` | POST — אימות מייל מול DB allowlist, יצירת iron-session cookie |
+| `auth/logout/route.ts` | GET — מחיקת session cookie |
+| `session/route.ts` | GET — מחזיר פרטי משתמש מחובר (email, role, isAdmin) |
+| `recruiting/route.ts` | GET/POST/PATCH/DELETE — CRUD ראשי: jobs, candidates, applications, aiInstructions, appUsers |
+| `cv/route.ts` | GET/POST — העלאת PDF ל-MinIO, חילוץ טקסט (pdfjs), הורדת קובץ |
+| `cv/ai/route.ts` | POST — חילוץ פרטי מועמד מטקסט PDF באמצעות AI |
+| `evaluate/route.ts` | POST — הערכת מועמד (לפני/אחרי ראיון), שמירת JSON מלא, עדכון application |
+| `interview/summarize/route.ts` | POST — סיכום תמלול ראיון, אישור ושמירה |
+| `jobs/parse/route.ts` | POST — חילוץ משרה מטקסט חופשי (מייל, תיאור רשמי, הבהרות) |
+| `jobs/refine/route.ts` | POST — עדכון משרה קיימת לפי מידע חדש, הצגת שינויים מוצעים לאישור |
+| `jobs/scan-candidates/route.ts` | POST — סריקת כל מועמדי המאגר מול משרה בbatches, מחזיר ציון+חוזקות+פערים לכל אחד |
+| `ai-chat/route.ts` | POST — המשך שיח עם AI על מייל גיוס (multi-turn, context per application) |
+| `ai-general/route.ts` | POST — שאילתה חופשית על נתוני המערכת |
+| `team/route.ts` | GET/POST/PATCH/DELETE — CRUD עובדי צוות, שמירת ai_insight |
+| `team/meetings/route.ts` | POST — סיכום תמלול פגישה / שמירה / התאמת משרות / ניתוח עובד |
+| `team/run-insight/route.ts` | POST — סקירת AI מלאה לעובד (job match + analysis בparallel, שמירה ב-DB) |
+| `team/extract-profile/route.ts` | POST — בניית פרופיל עובד מסודר מטקסט גולמי |
+| `team/promote-to-candidate/route.ts` | POST — קידום עובד כמועמד: יוצר כרטיס, מקשר למשרות שנבחרו |
+| `health/live/route.ts` | GET — `{"status":"ok"}` — liveness check |
+| `health/ready/route.ts` | GET — בדיקת חיבור DB — readiness check |
+
+### `db/`
+| קובץ | תפקיד |
+|---|---|
+| `schema.ts` | הגדרת 8 טבלאות Drizzle: appUsers, jobs, candidates, applications, aiActivityLogs, aiInstructions, evaluationRules, auditLogs |
+| `client.ts` | יצירת Drizzle client עם connection pool ל-PostgreSQL |
+| `migrations/0000_odd_stature.sql` | Migration ראשון — יצירת כל הטבלאות |
+
+### `lib/`
+| קובץ | תפקיד |
+|---|---|
+| `ai/provider.ts` | Dual-mode adapter: Chat Completions (proxy) / Responses API (OpenAI ישיר). `generateStructured()` + `estimateCost()` |
+| `ai/evaluation-prompt.ts` | פרומפטים הערכת מועמד לפני/אחרי ראיון + `evaluationSchema` (JSON Schema מלא) |
+| `ai/prompts.ts` | פרומפטים: CV extraction, Job parsing, Interview summary |
+| `ai/team-prompts.ts` | פרומפטים: פגישות 1:1, job matching, ניתוח עובד, חילוץ פרופיל |
+| `ai/instructions.ts` | `instructionDefinitions` — רשימת 9 המפתחות+כותרות, משמשת bootstrap ו-Admin UI |
+| `auth/session.ts` | iron-session config: cookie name, secret, options |
+| `auth/identity.ts` | `requireAppIdentity()`, `requireAdmin()` — guards לכל API route |
+| `auth/bootstrap.ts` | מריץ פעם אחת בהפעלה: יוצר admin owner, זורע 9 AI instructions ל-DB |
+| `storage/client.ts` | S3/MinIO adapter: `uploadObject()`, `getSignedUrl()`, `deleteObject()` |
+| `audit.ts` | `writeAudit()` — כתיבת שורה ל-audit_logs |
+
+### `scripts/`
+| קובץ | תפקיד |
+|---|---|
+| `migrate.ts` | הרצת Drizzle migrations ב-production |
+| `import-export.ts` | ייבוא נתונים מ-JSON export של המערכת המקורית |
+| `check-db.mjs` | בדיקת חיבור DB והצגת טבלאות קיימות |
+| `start-docker.ps1` | הפעלת Docker Compose אוטומטית (נקרא מ-Windows Startup) |
+
+### קבצי שורש
+| קובץ | תפקיד |
+|---|---|
+| `docker-compose.yml` | 4 services: postgres, minio, minio-init (bucket creation), web |
+| `Dockerfile` | Multi-stage build — node:22-alpine, non-root user |
+| `next.config.ts` | `serverExternalPackages: ["pg"]` |
+| `drizzle.config.ts` | Drizzle Kit config — schema path, migrations path |
+| `tsconfig.json` | TypeScript config עם path aliases (`@/*`) |
+| `.env.example` | Template לכל משתני הסביבה |
+| `docs/starting_command.md` | הוראות הפעלה יומיומיות: CodeMie proxy, Docker, `npm run dev` |
