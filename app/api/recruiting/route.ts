@@ -125,6 +125,9 @@ export async function GET(request: Request) {
       ? toRows(await db.execute(sql`SELECT email,role,created_at,updated_at FROM app_users ORDER BY CASE role WHEN 'admin' THEN 1 ELSE 2 END,email`))
       : [];
 
+    const teamCountResult = toRows(await db.execute(sql`SELECT COUNT(*)::int AS count FROM team_members`));
+    const teamMemberCount = Number(teamCountResult[0]?.count ?? 0);
+
     return Response.json({
       jobs: jobRows,
       candidates: candidateRows,
@@ -133,6 +136,7 @@ export async function GET(request: Request) {
       aiActivity: aiActivityRows,
       aiInstructions: aiInstructionRows,
       appUsers: appUserRows,
+      teamMemberCount,
     });
   } catch (error) {
     console.error("GET /api/recruiting error:", error);

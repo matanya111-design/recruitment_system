@@ -497,6 +497,7 @@ export default function Home() {
     [aiActivity, setAiActivity] = useState<AiActivity[]>([]),
     [aiInstructions, setAiInstructions] = useState<AiInstruction[]>([]),
     [appUsers, setAppUsers] = useState<AppUser[]>([]),
+    [teamMemberCount, setTeamMemberCount] = useState(0),
     [currentUser, setCurrentUser] = useState<CurrentUser>({ email: "", name: "", isAuthenticated: false, isAllowed: false, isAdmin: false });
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null),
     [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(
@@ -648,6 +649,7 @@ export default function Home() {
       setAppUsers((d.appUsers || []).map((x: any) => ({
         email: x.email, role: x.role, createdAt: x.created_at, updatedAt: x.updated_at,
       })));
+      setTeamMemberCount(Number(d.teamMemberCount ?? 0));
     } catch (e) {
       setError(e instanceof Error ? e.message : "טעינה נכשלה");
     } finally {
@@ -702,12 +704,12 @@ export default function Home() {
     },
     { key: "archive" as View, label: "ארכיון", icon: "▤", badge: archivedJobs.length + archivedApplications.length },
     { key: "guide" as View, label: "מדריך ותיעוד", icon: "?" },
-    { key: "ai-activity" as View, label: "פעילות AI ועלויות", icon: "✦" },
+    { key: "ai-activity" as View, label: "פעילות AI ועלויות", icon: "✦", badge: aiActivity.length || undefined },
     { key: "general-ai" as View, label: "שאילתות AI כלליות", icon: "⊕" },
-    { key: "team" as View, label: "ניהול צוות", icon: "♖" },
+    { key: "team" as View, label: "ניהול צוות", icon: "♖", badge: teamMemberCount || undefined },
     ...(currentUser.isAdmin ? [
-      { key: "users" as View, label: "משתמשים והרשאות", icon: "♚" },
-      { key: "ai-instructions" as View, label: "הוראות AI", icon: "⚙" },
+      { key: "users" as View, label: "משתמשים והרשאות", icon: "♚", badge: appUsers.length || undefined },
+      { key: "ai-instructions" as View, label: "הוראות AI", icon: "⚙", badge: aiInstructions.length || undefined },
     ] : []),
   ];
   const userInitials = (currentUser.name || currentUser.email || "משתמש")
