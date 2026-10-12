@@ -62,6 +62,14 @@ export const candidates = pgTable("candidates", {
   cvExtractedText: text("cv_extracted_text").notNull().default(""),
   cvExtractionStatus: text("cv_extraction_status").notNull().default("לא הועלה"),
   cvUploadedAt: timestamp("cv_uploaded_at", { withTimezone: true }),
+  photoKey: text("photo_key"),
+  photoContentType: text("photo_content_type"),
+  photoUploadedAt: timestamp("photo_uploaded_at", { withTimezone: true }),
+  // Set when this candidate record originated from (or was matched back to) a team_members promotion
+  // — see app/api/team/promote-to-candidate/route.ts. team_members is a dynamically-migrated table
+  // (not in this Drizzle schema), so this is a plain id reference, same convention as
+  // evaluationRules.sourceApplicationId below.
+  sourceTeamMemberId: integer("source_team_member_id"),
   archived: boolean("archived").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -156,5 +164,24 @@ export const auditLogs = pgTable("audit_logs", {
   entityId: text("entity_id"),
   beforeJson: jsonb("before_json"),
   afterJson: jsonb("after_json"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const candidateScans = pgTable("candidate_scans", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  jobId: integer("job_id").notNull(),
+  scanned: integer("scanned").notNull(),
+  resultsJson: jsonb("results_json").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const errorLogs = pgTable("error_logs", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  source: text("source", { enum: ["client", "server"] }).notNull(),
+  message: text("message").notNull(),
+  stack: text("stack"),
+  url: text("url"),
+  actorEmail: text("actor_email"),
+  context: jsonb("context"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

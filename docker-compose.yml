@@ -63,6 +63,27 @@ services:
       minio:
         condition: service_healthy
 
+  pg-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /backups
+        echo '#!/bin/sh' > /usr/local/bin/backup.sh
+        echo 'FILE=/backups/backup_$(date +%Y-%m-%d_%H-%M).sql.gz' >> /usr/local/bin/backup.sh
+        echo 'PGPASSWORD=change-me pg_dump -h postgres -U app candidate_manager | gzip > "$$FILE" && echo "Backup saved: $$FILE"' >> /usr/local/bin/backup.sh
+        echo 'find /backups -name "*.sql.gz" -mtime +7 -delete' >> /usr/local/bin/backup.sh
+        chmod +x /usr/local/bin/backup.sh
+        echo '0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1' > /etc/crontabs/root
+        /usr/local/bin/backup.sh
+        crond -f
+
 volumes:
   postgres_data:
   minio_data:

@@ -83,6 +83,16 @@ export const CANDIDATE_SCAN_INSTRUCTIONS = `
 - gaps: 2-4 פערים קצרים ביחס לדרישות הליבה.
 `;
 
+// Read-only Q&A about a candidate-scan run — "why didn't X make the list", "who else fits besides
+// the ones shown". Has the FULL scanned set (including everyone below the score-60 display cutoff),
+// not just the matches shown in the results modal.
+export const SCAN_CHAT_INSTRUCTIONS = `
+אתה עוזר למגייס/ת ב-NAYA להבין את תוצאות סריקת מועמדים אוטומטית שבוצעה מול משרה מסוימת.
+יש לך גישה לדרישות המשרה ולתוצאות המלאות של הסריקה — כולל כל מי שנסרק, גם מי שלא עבר את סף הציון (60) ולכן לא הוצג ברשימת ההתאמות. לכל מי שנסרק יש ציון, רמת התאמה, שורה תחתונה, חוזקות ופערים כפי שה-AI קבע בזמן הסריקה.
+ענה על שאלות כמו "למה מועמד/ת X לא נכנס/ה לרשימה", "מי עוד עשוי להתאים חוץ מהמוצגים", "מה ההבדל בין X ל-Y" — תוך הפניה קונקרטית לציון, לחוזקות ולפערים שכבר נקבעו לאותו מועמד/ת בסריקה. אם נשאלת על מישהו שלא מופיע כלל בנתונים שסופקו, אמור זאת בפירוש ואל תמציא.
+זו שיחת בירור על תוצאות שכבר הופקו — אינך מריץ סריקה חדשה ואינך משנה את הציונים השמורים. שוחח בעברית טבעית ובשפה פשוטה, בקצרה ולעניין. ענה אך ורק עם שדה reply.
+`;
+
 // Follow-up, on-demand only — generated after the pre-interview evaluation, grounded in it plus the CV.
 export const INTERVIEW_QUESTIONS_INSTRUCTIONS = `
 אתה מכין שאלות לראיון מקצועי פנימי, בהמשך להערכה שכבר בוצעה למועמד מול משרה מסוימת.

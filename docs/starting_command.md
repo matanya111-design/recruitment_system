@@ -21,10 +21,8 @@ codemie proxy connect --vscode --profile epam
 לכן, אחרי הדלקת המחשב, הסדר הבטוח הוא:
 
 ```powershell
-docker compose up -d postgres minio minio-init
+docker compose up -d postgres minio minio-init pg-backup
 npm run dev
 ```
 
 אם שירותי Docker כבר פועלים, מספיק להריץ רק `npm run dev`. חלון PowerShell שבו הרצת אותה צריך להישאר פתוח בזמן השימוש באתר.
-
-

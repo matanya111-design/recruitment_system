@@ -11,3 +11,4 @@ yarn-debug.log*
 yarn-error.log*
 .vercel
 next-env.d.ts
+backups/

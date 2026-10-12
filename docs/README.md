@@ -1,6 +1,6 @@
 # מערכת ניהול והערכת מועמדים — NAYA Tech Recruitment System
 
-> גרסה: 2.6 | Branch: `dev` | עודכן: 25 בספטמבר 2026
+> גרסה: 2.7 | Branch: `dev` | עודכן: 12 באוקטובר 2026
 
 ## מה זה?
 
@@ -121,7 +121,7 @@ recruitment_system/
 │   ├── spec-he.md              # מפרט מקורי מלא (עברית)
 │   └── starting_command.md     # הוראות הפעלה יומיומיות (CodeMie proxy + Docker + dev)
 │
-├── docker-compose.yml          # postgres + minio + minio-init + web (restart: unless-stopped)
+├── docker-compose.yml          # postgres + minio + minio-init + pg-backup + web (restart: unless-stopped)
 ├── Dockerfile                  # Multi-stage build (non-root)
 ├── .env.example                # Template למשתני סביבה
 └── .env.local                  # ערכים מקומיים (לא ב-Git)
@@ -146,8 +146,8 @@ Copy-Item .env.example .env.local
 # 3. התקן תלויות
 npm install
 
-# 4. הרם PostgreSQL ו-MinIO
-docker compose up -d postgres minio minio-init
+# 4. הרם PostgreSQL, MinIO ושירות הגיבוי
+docker compose up -d postgres minio minio-init pg-backup
 
 # 5. הרץ migrations
 npm run db:migrate
@@ -198,6 +198,20 @@ npm run db:generate  # יצירת migration מ-schema
 npm run db:migrate   # הרצת migrations
 ```
 
+## גיבוי נתונים
+
+שירות `pg-backup` ב-`docker-compose.yml` מריץ `pg_dump` יומי ב-02:00 ושומר קבצי `.sql.gz` ב-`backups/` (bind mount לתיקיית הפרויקט, לא בתוך Docker volume).
+
+- **גיבוי מיידי** מתבצע גם בכל `docker compose up -d pg-backup` (בעלייה של הקונטיינר).
+- שומר **7 ימים** אחורה ומוחק ישנים אוטומטית.
+- תיקיית `backups/` נמצאת ב-`.gitignore` (מכילה נתוני מועמדים רגישים).
+- **זרימת אבטחת מידע**: מחיקה מהממשק הראשי → ארכיון (ניתן לשחזר). מחיקה לצמיתות → רק מדף הארכיון. גיבוי `.sql.gz` → השכבה האחרונה שמאפשרת שחזור גם אחרי מחיקה מהארכיון.
+
+```powershell
+# גיבוי ידני מיידי (מריץ pg_dump בקונטיינר הפועל)
+docker compose restart pg-backup
+```
+
 ## מסד הנתונים — טבלאות
 
 ### מנוהלות ב-Drizzle (`db/schema.ts` + `db/migrations/`)
@@ -241,7 +255,7 @@ npm run db:migrate   # הרצת migrations
 | משרות | רשימה עם מיון לפי כל שדה, יצירה ידנית / מ-AI |
 | מועמדים | רשימה עם מיון לפי כל שדה, חיפוש וסינון |
 | מועמד (דף פנימי) | סדר הטאבים: סקירה / קורות חיים / **הערכה לפני ראיון** / סיכום ראיון / **הערכה לאחר ראיון** — שני טאבי ההערכה עצמאיים לגמרי זה מזה. בכל טאב הערכה: השוואת AI ייעוצית → תיבת "ההחלטה שלך" (חובה למלא כדי שייווצר מייל גיוס) |
-| ארכיון | משרות ומועמדויות מורדות עם סיבת דחייה, שחזור |
+| ארכיון | משרות ומועמדויות מורדות. שחזור בכל עת. מחיקה לצמיתות — **רק מכאן** (לא מהממשק הראשי) |
 | מדריך | הסבר מעשי על זרימת העבודה (מעודכן) |
 | פעילות AI | יומן **כל** קריאות AI מאז ומעולם + עלות/טוקנים כוללים על כל ההיסטוריה, מיון לפי כל שדה, דפדוף 50 בעמוד |
 | שאילתות AI | שאל כל שאלה על המערכת |

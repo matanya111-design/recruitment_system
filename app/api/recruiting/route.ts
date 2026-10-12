@@ -6,7 +6,7 @@ import { sql, eq, and } from "drizzle-orm";
 import { jobs, candidates, applications, aiActivityLogs, aiInstructions, appUsers } from "@/db/schema";
 import { PROMPT_DEFAULTS } from "@/lib/ai/prompt-defaults";
 import { instructionDefinitions } from "@/lib/ai/instructions";
-import { deleteObject } from "@/lib/storage/client";
+import { ensureTeamMembersTable } from "@/lib/team/ensure-table";
 
 const DEFAULTS = PROMPT_DEFAULTS;
 const TRIGGER_BY_KEY: Record<string, string> = Object.fromEntries(instructionDefinitions.map((d) => [d.key, d.trigger]));
@@ -95,15 +95,20 @@ export async function GET(request: Request) {
       FROM jobs j LEFT JOIN applications a ON a.job_id=j.id WHERE j.archived=false GROUP BY j.id ORDER BY j.updated_at DESC
     `));
 
+    // team_members is lazily migrated (see app/api/team/route.ts) — ensure it exists before the
+    // LEFT JOIN below, so a fresh install where nobody has opened the Team tab yet doesn't 500 here.
+    await ensureTeamMembersTable();
     const candidateRows = toRows(await db.execute(sql`
-      SELECT c.*,c.created_at candidate_created_at,a.updated_at application_updated_at,a.id application_id,a.job_id,a.status,a.interview_date,a.interview_summary,a.interview_raw_material,a.next_action,a.next_action_date,a.score,a.recommendation,a.evaluation_type,a.evaluation_date,a.evaluation_json,a.pre_evaluation_json,a.pre_evaluation_date,a.pre_human_decision,a.pre_human_decision_reason,a.pre_human_decision_date,a.post_evaluation_json,a.post_evaluation_date,a.post_human_decision,a.post_human_decision_reason,a.post_human_decision_date,a.evaluation_feedback,a.proposed_engine_rule,a.proposed_engine_rule_key,a.engine_rule_status,LENGTH(COALESCE(c.cv_extracted_text,''))::int cv_text_length,j.title role,j.client
+      SELECT c.*,c.created_at candidate_created_at,a.updated_at application_updated_at,a.id application_id,a.job_id,a.status,a.interview_date,a.interview_summary,a.interview_raw_material,a.next_action,a.next_action_date,a.score,a.recommendation,a.evaluation_type,a.evaluation_date,a.evaluation_json,a.pre_evaluation_json,a.pre_evaluation_date,a.pre_human_decision,a.pre_human_decision_reason,a.pre_human_decision_date,a.post_evaluation_json,a.post_evaluation_date,a.post_human_decision,a.post_human_decision_reason,a.post_human_decision_date,a.evaluation_feedback,a.proposed_engine_rule,a.proposed_engine_rule_key,a.engine_rule_status,LENGTH(COALESCE(c.cv_extracted_text,''))::int cv_text_length,j.title role,j.client,
+             tm.role team_member_role, tm.client team_member_client
       FROM candidates c JOIN applications a ON a.candidate_id=c.id JOIN jobs j ON j.id=a.job_id
+      LEFT JOIN team_members tm ON tm.id = c.source_team_member_id
       WHERE c.archived=false AND a.archived=false AND j.archived=false ORDER BY a.updated_at DESC
     `));
 
     const archivedJobRows = toRows(await db.execute(sql`SELECT id,title,client,status,updated_at FROM jobs WHERE archived=true ORDER BY updated_at DESC`));
     const archivedAppRows = toRows(await db.execute(sql`
-      SELECT a.id application_id,a.status,a.updated_at,a.evaluation_feedback,c.full_name,j.title role,j.client
+      SELECT a.id application_id,a.status,a.updated_at,a.evaluation_feedback,c.id candidate_id,c.full_name,c.professional_title,c.company,c.years_experience,c.technologies,c.photo_key,j.title role,j.client
       FROM applications a JOIN candidates c ON c.id=a.candidate_id JOIN jobs j ON j.id=a.job_id
       WHERE a.archived=true AND c.archived=false AND j.archived=false ORDER BY a.updated_at DESC
     `));
@@ -331,23 +336,34 @@ export async function DELETE(request: Request) {
     if (!id) return Response.json({ error: "חסר מזהה" }, { status: 400 });
 
     if (body.entity === "job") {
-      const countResult2 = await db.execute(sql`SELECT COUNT(*)::int AS c FROM applications WHERE job_id=${id}`);
-      const count = (countResult2 as unknown as { rows: Array<Record<string, unknown>> }).rows[0];
-      if (Number((count as Record<string, unknown>).c) > 0) {
-        return Response.json({ error: "לא ניתן למחוק משרה עם מועמדויות. ניתן להעביר לארכיון." }, { status: 409 });
+      if (body.permanent) {
+        const [job] = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.id, id), eq(jobs.archived, true)));
+        if (!job) return Response.json({ error: "משרה לא נמצאת בארכיון" }, { status: 404 });
+        await db.delete(applications).where(eq(applications.jobId, id));
+        await db.delete(jobs).where(eq(jobs.id, id));
+        await writeAudit({ actorEmail: identity.email, action: "permanent_delete", entityType: "job", entityId: id });
+        return Response.json({ ok: true });
       }
-      await db.delete(jobs).where(eq(jobs.id, id));
-      await writeAudit({ actorEmail: identity.email, action: "delete", entityType: "job", entityId: id });
+      await db.update(jobs).set({ archived: true, updatedAt: new Date() }).where(eq(jobs.id, id));
+      await writeAudit({ actorEmail: identity.email, action: "archive", entityType: "job", entityId: id });
+      return Response.json({ ok: true });
+    }
+
+    if (body.entity === "application" && body.permanent) {
+      const [app] = await db.select({ id: applications.id }).from(applications).where(and(eq(applications.id, id), eq(applications.archived, true)));
+      if (!app) return Response.json({ error: "מועמדות לא נמצאת בארכיון" }, { status: 404 });
+      await db.delete(applications).where(eq(applications.id, id));
+      await writeAudit({ actorEmail: identity.email, action: "permanent_delete", entityType: "application", entityId: id });
       return Response.json({ ok: true });
     }
 
     if (body.entity === "candidate") {
       const [cand] = await db.select({ cvKey: candidates.cvKey }).from(candidates).where(eq(candidates.id, id));
       if (!cand) return Response.json({ error: "מועמד לא נמצא" }, { status: 404 });
-      await db.delete(applications).where(eq(applications.candidateId, id));
-      await db.delete(candidates).where(eq(candidates.id, id));
-      if (cand.cvKey) await deleteObject(cand.cvKey).catch(() => undefined);
-      await writeAudit({ actorEmail: identity.email, action: "delete", entityType: "candidate", entityId: id });
+      // Soft-delete: archive candidate and all their applications to preserve interview history
+      await db.update(applications).set({ archived: true, updatedAt: new Date() }).where(eq(applications.candidateId, id));
+      await db.update(candidates).set({ archived: true, updatedAt: new Date() }).where(eq(candidates.id, id));
+      await writeAudit({ actorEmail: identity.email, action: "archive", entityType: "candidate", entityId: id });
       return Response.json({ ok: true });
     }
 

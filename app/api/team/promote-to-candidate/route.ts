@@ -90,6 +90,7 @@ export async function POST(request: Request) {
         technologies = CASE WHEN technologies='[]'::jsonb THEN ${JSON.stringify(profile.technologies)}::jsonb ELSE technologies END,
         experience_summary = CASE WHEN experience_summary='' THEN ${profile.experienceSummary} ELSE experience_summary END,
         recruiter_opinion = CASE WHEN recruiter_opinion='' THEN ${profile.recruiterOpinion} ELSE recruiter_opinion END,
+        source_team_member_id = ${memberId},
         updated_at = NOW()
       WHERE id=${candidateId}
     `);
@@ -104,6 +105,7 @@ export async function POST(request: Request) {
       experienceSummary: profile.experienceSummary,
       recruiterOpinion: profile.recruiterOpinion,
       cvExtractionStatus: "לא הועלה",
+      sourceTeamMemberId: memberId,
     }).returning({ id: candidates.id });
     candidateId = newCand.id;
   }

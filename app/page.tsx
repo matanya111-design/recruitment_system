@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
 
 import { Fragment, useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { instructionDefinitions } from "@/lib/ai/instructions";
 
 // Module-level background jobs tracker — survives component unmount
@@ -36,7 +37,10 @@ type AiActivity = {
   estimatedCostUsd: number; createdAt: string;
 };
 type ArchivedJob = { id: number; title: string; client: string; status: string; updatedAt: string };
-type ArchivedApplication = { applicationId: number; candidateName: string; role: string; client: string; status: string; updatedAt: string };
+type ArchivedApplication = {
+  applicationId: number; candidateId: number; candidateName: string; role: string; client: string; status: string; updatedAt: string;
+  professionalTitle: string; company: string; years: number; tech: string[]; hasPhoto: boolean;
+};
 type Job = {
   id: number;
   title: string;
@@ -139,6 +143,13 @@ type Candidate = {
   cvStatus: string;
   cvUploadedAt: string;
   cvTextLength: number;
+  hasPhoto: boolean;
+  sourceTeamMemberId: number | null;
+  // Live from team_members (not a one-time copy) when sourceTeamMemberId is linked, so an internal
+  // employee's title/workplace shown around the app always reflects Team management, not a stale
+  // or AI-guessed value written once at promotion time.
+  teamMemberRole: string;
+  teamMemberClient: string;
   created: string;
   updated: string;
   initials: string;
@@ -157,6 +168,7 @@ const colors = [
   "teal",
 ];
 const parseJson = (value: unknown): string[] => {
+  if (Array.isArray(value)) return value as string[];
   try {
     return JSON.parse(String(value || "[]"));
   } catch {
@@ -191,6 +203,227 @@ const formatBytes = (value: number) =>
   value >= 1024 * 1024
     ? `${(value / 1024 / 1024).toFixed(1)} MB`
     : `${Math.max(1, Math.round(value / 1024))} KB`;
+
+// ---- Person hover card (candidate/team-member preview on hover, with photo upload) ----
+
+type PersonHoverInfo = {
+  entity: "candidate" | "team";
+  id: number;
+  name: string;
+  title: string;
+  org: string;
+  meta: string; // years of experience / tenure — free text, entity-specific
+  tech: string[];
+  initials: string;
+  color: string;
+  hasPhoto?: boolean; // when unknown (e.g. scan results), the card just tries the photo fetch
+  // Where to actually fetch the photo from, when different from `entity`/`id` — a candidate
+  // promoted from a team member has no photo of their own until uploaded, so falls back to the
+  // team member's photo instead of showing a bare face icon for someone who does have one.
+  photoEntity?: "candidate" | "team";
+  photoId?: number;
+};
+
+function candidateHoverInfo(c: Candidate): PersonHoverInfo {
+  const fallbackToTeamPhoto = !c.hasPhoto && !!c.sourceTeamMemberId;
+  return {
+    entity: "candidate", id: c.id, name: c.name,
+    // Prefer the live team_members role/client over the candidate's own professionalTitle/company
+    // when linked — those are AI-guessed at promotion time (default "עובד פנימי" placeholder) and go
+    // stale, while role/client are the authoritative, currently-edited fields for this person.
+    title: c.teamMemberRole || c.professionalTitle || "", org: c.teamMemberClient || c.company || "",
+    meta: c.years ? `${c.years} שנות ניסיון` : "",
+    tech: c.tech || [],
+    initials: c.initials, color: c.color,
+    hasPhoto: fallbackToTeamPhoto ? undefined : c.hasPhoto,
+    photoEntity: fallbackToTeamPhoto ? "team" : undefined,
+    photoId: fallbackToTeamPhoto ? c.sourceTeamMemberId! : undefined,
+  };
+}
+
+function archivedAppHoverInfo(a: ArchivedApplication): PersonHoverInfo {
+  const initials = a.candidateName.split(" ").map(x => x[0]).filter(Boolean).join("").slice(0, 2);
+  return {
+    entity: "candidate", id: a.candidateId, name: a.candidateName,
+    title: a.professionalTitle || "", org: a.company || "",
+    meta: a.years ? `${a.years} שנות ניסיון` : "",
+    tech: a.tech || [],
+    initials, color: colors[a.candidateId % colors.length], hasPhoto: a.hasPhoto,
+  };
+}
+
+function scanMatchHoverInfo(m: ScanMatch): PersonHoverInfo {
+  const initials = m.name.split(" ").map(x => x[0]).filter(Boolean).join("").slice(0, 2);
+  return {
+    entity: m.source === "team_member" ? "team" : "candidate", id: m.id, name: m.name,
+    title: m.title || "", org: m.org || "",
+    meta: m.years ? `${m.years} שנות ניסיון` : "",
+    tech: m.technologies || [],
+    initials, color: colors[m.id % colors.length], // hasPhoto unknown here — card tries the fetch regardless
+  };
+}
+
+function teamHoverInfo(m: TeamMember): PersonHoverInfo {
+  const initials = m.name.split(" ").map(x => x[0]).filter(Boolean).join("").slice(0, 2);
+  const tenure = formatTenure(m.nayaStartDate);
+  return {
+    entity: "team", id: m.id, name: m.name,
+    title: m.role || "", org: m.client || "",
+    meta: tenure !== "—" ? `ותק ב-NAYA: ${tenure}` : "",
+    tech: [],
+    initials, color: colors[m.id % colors.length], hasPhoto: m.hasPhoto,
+  };
+}
+
+// Presigned photo URLs are cached in-memory for the session (5-minute-valid, so refreshed enough
+// simply by being re-fetched on a later hover). `null` means "confirmed no photo".
+const personPhotoCache = new Map<string, string | null>();
+
+function FaceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20c0-4.4 3.6-7.5 8-7.5s8 3.1 8 7.5" />
+    </svg>
+  );
+}
+
+function PersonHoverCard({ info, children }: { info: PersonHoverInfo; children: React.ReactNode }) {
+  const [visible, setVisible] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [noPhotoConfirmed, setNoPhotoConfirmed] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function show() {
+    timerRef.current = setTimeout(() => {
+      const rect = anchorRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const cardWidth = 260, cardHeight = 180, margin = 12;
+      let left = rect.left;
+      let top = rect.bottom + 6;
+      if (left + cardWidth > window.innerWidth - margin) left = window.innerWidth - cardWidth - margin;
+      if (left < margin) left = margin;
+      if (top + cardHeight > window.innerHeight - margin) top = rect.top - cardHeight - 6;
+      if (top < margin) top = margin;
+      setPos({ top, left });
+      setVisible(true);
+    }, 250);
+  }
+  function hide() {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setVisible(false);
+  }
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  const photoEntity = info.photoEntity ?? info.entity;
+  const photoId = info.photoId ?? info.id;
+
+  useEffect(() => {
+    if (!visible || info.hasPhoto === false) return;
+    const key = `${photoEntity}:${photoId}`;
+    if (personPhotoCache.has(key)) {
+      const cached = personPhotoCache.get(key) ?? null;
+      setPhotoUrl(cached);
+      setNoPhotoConfirmed(cached === null);
+      return;
+    }
+    fetch(`/api/photo?entity=${photoEntity}&id=${photoId}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        const url = d?.url ?? null;
+        personPhotoCache.set(key, url);
+        setPhotoUrl(url);
+        setNoPhotoConfirmed(url === null);
+      })
+      .catch(() => { personPhotoCache.set(key, null); setPhotoUrl(null); setNoPhotoConfirmed(true); });
+  }, [visible, photoEntity, photoId, info.hasPhoto]);
+
+  return (
+    <>
+      <span ref={anchorRef} className="person-hover-trigger" onMouseEnter={show} onMouseLeave={hide}>
+        {children}
+      </span>
+      {visible && typeof document !== "undefined" && createPortal(
+        <div
+          className="person-hover-card"
+          style={{ top: pos.top, left: pos.left }}
+          onMouseEnter={() => { if (timerRef.current) clearTimeout(timerRef.current); }}
+          onMouseLeave={hide}
+        >
+          <div className="person-hover-photo">
+            {photoUrl
+              ? <img src={photoUrl} alt={info.name} />
+              : info.hasPhoto === false || noPhotoConfirmed
+                ? <FaceIcon />
+                : <div className={`avatar ${info.color}`}>{info.initials}</div>}
+          </div>
+          <div className="person-hover-body">
+            <b>{info.name}</b>
+            {(info.title || info.org) && <span>{[info.title, info.org].filter(Boolean).join(" · ")}</span>}
+            {info.meta && <span className="person-hover-meta">{info.meta}</span>}
+            {info.tech.length > 0 && (
+              <div className="person-hover-tech">
+                {info.tech.slice(0, 6).map((t, i) => <span key={i} className="pill neutral">{t}</span>)}
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+function PhotoUploader({ entity, id, hasPhoto, onChange }: {
+  entity: "candidate" | "team"; id: number; hasPhoto: boolean; onChange: () => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  async function upload(file: File) {
+    setUploading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("entity", entity);
+      form.append("id", String(id));
+      form.append("file", file);
+      const r = await fetch("/api/photo", { method: "POST", body: form });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "העלאת התמונה נכשלה");
+      personPhotoCache.delete(`${entity}:${id}`);
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "העלאת התמונה נכשלה");
+    } finally {
+      setUploading(false);
+    }
+  }
+  return (
+    <div className="photo-uploader">
+      <label className={`secondary upload-button ${uploading ? "disabled" : ""}`}>
+        {uploading ? "מעלה..." : hasPhoto ? "החלפת תמונה" : "העלאת תמונה"}
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          disabled={uploading}
+          onChange={(e) => { const file = e.target.files?.[0]; if (file) upload(file); }}
+        />
+      </label>
+      {error && <small style={{ color: "#b74c4c" }}>{error}</small>}
+    </div>
+  );
+}
+
+function RefreshButton({ onClick, busy, title = "רענון נתונים" }: { onClick: () => void; busy?: boolean; title?: string }) {
+  return (
+    <button type="button" className="icon-button" onClick={onClick} disabled={busy} title={title} aria-label={title}>
+      <span className={busy ? "spin" : ""}>⟳</span>
+    </button>
+  );
+}
+
 // The AI writes must/preferred/emphasis fields as one string with " - " between clauses (its natural
 // writing style, not a real delimiter contract) — split on that for a readable bullet list, falling
 // back to a plain paragraph when there's nothing to split.
@@ -269,6 +502,10 @@ export default function Home() {
     [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(
       null,
     );
+  // Set when jumping from a promoted candidate's "edit" button straight to their team-member edit
+  // form — a candidate created from a team member is edited only via Team management (see
+  // sourceTeamMemberId on Candidate).
+  const [pendingTeamEditId, setPendingTeamEditId] = useState<number | null>(null);
   const [query, setQuery] = useState(""),
     [statusFilter, setStatusFilter] = useState("הכול"),
     [menuOpen, setMenuOpen] = useState(false),
@@ -278,7 +515,13 @@ export default function Home() {
     "job" | "candidate" | "editJob" | "editCandidate" | null
   >(null);
   const [, setLoginRefresh] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const jobs2 = useBgJobs(); // subscribe to background job updates
+
+  async function refreshAll() {
+    setRefreshing(true);
+    try { await load(true); } finally { setRefreshing(false); }
+  }
 
   async function load(silent = false) {
     if (!silent) setLoading(true);
@@ -361,6 +604,10 @@ export default function Home() {
           cvStatus: c.cv_extraction_status || "לא הועלה",
           cvUploadedAt: c.cv_uploaded_at || "",
           cvTextLength: Number(c.cv_text_length || 0),
+          hasPhoto: !!c.photo_key,
+          sourceTeamMemberId: c.source_team_member_id === null || c.source_team_member_id === undefined ? null : Number(c.source_team_member_id),
+          teamMemberRole: c.team_member_role || "",
+          teamMemberClient: c.team_member_client || "",
           created: formatDate(c.candidate_created_at || c.created_at),
           updated: formatDate(c.application_updated_at || c.updated_at),
           initials: c.full_name
@@ -375,9 +622,12 @@ export default function Home() {
         id: Number(j.id), title: j.title, client: j.client, status: j.status, updatedAt: j.updated_at,
       })));
       setArchivedApplications((d.archivedApplications || []).map((a: any) => ({
-        applicationId: Number(a.application_id), candidateName: a.full_name,
+        applicationId: Number(a.application_id), candidateId: Number(a.candidate_id), candidateName: a.full_name,
         role: a.role, client: a.client, status: a.status, updatedAt: a.updated_at,
         rejectionReason: a.evaluation_feedback || "",
+        professionalTitle: a.professional_title || "", company: a.company || "",
+        years: Number(a.years_experience || 0), tech: parseJson(a.technologies),
+        hasPhoto: !!a.photo_key,
       })));
       setAiActivity((d.aiActivity || []).map((x: any) => ({
         id: Number(x.id),
@@ -477,6 +727,7 @@ export default function Home() {
           <span>גיוס טכנולוגי מבוסס AI</span>
         </div>
         <div className="top-spacer" />
+        <RefreshButton onClick={refreshAll} busy={refreshing} title="רענון כל הנתונים" />
         <div className="user-block">
           <div className="avatar user-avatar" title={userInitials} aria-label="משתמש מחובר" />
           <div>
@@ -551,16 +802,6 @@ export default function Home() {
                 addCandidate={() => setModal("candidate")}
                 refresh={() => load(true)}
               edit={() => setModal("editJob")}
-              remove={async () => {
-                if (selectedJob.candidates > 0) {
-                  alert("לא ניתן למחוק לצמיתות משרה שיש לה מועמדויות. ניתן להעביר אותה לארכיון.");
-                  return;
-                }
-                if (confirm(`למחוק לצמיתות את המשרה ${selectedJob.title}? פעולה זו אינה ניתנת לביטול.`)) {
-                  await api("DELETE", { entity: "job", id: selectedJob.id });
-                  setView("jobs");
-                }
-              }}
                 archive={async () => {
                   if (confirm("להעביר את המשרה לארכיון?")) {
                     await api("PATCH", {
@@ -613,9 +854,16 @@ export default function Home() {
                   ...body,
                 });
               }}
-              editCandidate={() => setModal("editCandidate")}
+              editCandidate={() => {
+                if (selectedCandidate.sourceTeamMemberId) {
+                  setPendingTeamEditId(selectedCandidate.sourceTeamMemberId);
+                  setView("team");
+                } else {
+                  setModal("editCandidate");
+                }
+              }}
               removeCandidate={async () => {
-                if (confirm(`למחוק לצמיתות את ${selectedCandidate.name}?\n\nכל המועמדויות, הראיונות, הערכות ה-AI וקורות החיים יימחקו. פעולה זו אינה ניתנת לביטול.`)) {
+                if (confirm(`להעביר לארכיון את ${selectedCandidate.name}?\n\nכל המועמדויות, הראיונות וההערכות יועברו לארכיון. ניתן לשחזר בכל עת מדף הארכיון.`)) {
                   await api("DELETE", { entity: "candidate", id: selectedCandidate.id });
                   setView("candidates");
                 }
@@ -656,12 +904,24 @@ export default function Home() {
                 restoreApplication={async (id) => {
                   await api("PATCH", { entity: "application", id, archived: 0 });
                 }}
+                deleteJob={async (id) => {
+                  await api("DELETE", { entity: "job", id, permanent: true });
+                }}
+                deleteApplication={async (id) => {
+                  await api("DELETE", { entity: "application", id, permanent: true });
+                }}
                 refresh={() => load(true)}
               />
             )}
             {view === "ai-activity" && <AiActivityPage rows={aiActivity} />}
             {view === "general-ai" && <GeneralAiPage jobs={jobs} candidates={candidates} />}
-            {view === "team" && <TeamPage jobs={jobs} />}
+            {view === "team" && (
+              <TeamPage
+                jobs={jobs}
+                pendingEditId={pendingTeamEditId}
+                onConsumePendingEdit={() => setPendingTeamEditId(null)}
+              />
+            )}
             {view === "ai-instructions" && currentUser.isAdmin && (
               <AiInstructionsPage
                 rows={aiInstructions}
@@ -827,7 +1087,7 @@ function Dashboard({
               >
                 <span className="action-icon orange">!</span>
                 <span className="action-copy">
-                  <strong>{c.name}</strong>
+                  <PersonHoverCard info={candidateHoverInfo(c)}><strong>{c.name}</strong></PersonHoverCard>
                   <small>{c.nextAction} · {c.role} · {c.client}</small>
                 </span>
                 {c.nextActionDate && <span className="action-time">{formatDate(c.nextActionDate)}</span>}
@@ -999,7 +1259,6 @@ function JobPage({
   addCandidate,
   edit,
   archive,
-  remove,
   refresh,
 }: {
   job: Job;
@@ -1009,12 +1268,18 @@ function JobPage({
   addCandidate: () => void;
   edit: () => void;
   archive: () => void;
-  remove: () => void;
   refresh: () => void;
 }) {
   const [scanning, setScanning] = useState(false);
-  const [scanResults, setScanResults] = useState<{ results: ScanMatch[]; scanned: number } | null>(null);
+  const [loadingLastScan, setLoadingLastScan] = useState(false);
+  const [scanResults, setScanResults] = useState<{ results: ScanMatch[]; scanned: number; createdAt?: string | null } | null>(null);
   const [scanError, setScanError] = useState("");
+  const [refreshingJob, setRefreshingJob] = useState(false);
+  function doRefresh() {
+    setRefreshingJob(true);
+    refresh();
+    setTimeout(() => setRefreshingJob(false), 600);
+  }
 
   async function runScan() {
     setScanning(true);
@@ -1036,6 +1301,21 @@ function JobPage({
     }
   }
 
+  async function openLastScan() {
+    setLoadingLastScan(true);
+    setScanError("");
+    try {
+      const r = await fetch(`/api/jobs/scan-candidates?jobId=${job.id}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "אין סריקה שמורה למשרה זו — יש להריץ סריקה");
+      setScanResults(d);
+    } catch (e) {
+      setScanError(e instanceof Error ? e.message : "אין סריקה שמורה למשרה זו");
+    } finally {
+      setLoadingLastScan(false);
+    }
+  }
+
   return (
     <>
       <button className="crumb" onClick={back}>
@@ -1046,6 +1326,7 @@ function JobPage({
         subtitle={`${job.client} · עודכנה ${job.updated}`}
         action={
           <>
+            <RefreshButton onClick={doRefresh} busy={refreshingJob} title="רענון נתוני המשרה" />
             <span
               className={`pill ${job.status === "פעילה" ? "success" : "neutral"}`}
             >
@@ -1057,11 +1338,11 @@ function JobPage({
             <button className="secondary" onClick={runScan} disabled={scanning}>
               {scanning ? "סורק מועמדים..." : "✦ סריקת מועמדים קיימים"}
             </button>
+            <button className="secondary" onClick={openLastScan} disabled={loadingLastScan}>
+              {loadingLastScan ? "טוען..." : "פתח סריקה אחרונה"}
+            </button>
             <button className="archive-button" onClick={archive}>
               ארכיון
-            </button>
-            <button className="danger-text-button" onClick={remove}>
-              מחיקה לצמיתות
             </button>
           </>
         }
@@ -1152,30 +1433,57 @@ function JobPage({
         <ScanResultsModal
           jobId={job.id}
           jobTitle={job.title}
+          jobClient={job.client}
           results={scanResults.results}
           scanned={scanResults.scanned}
+          createdAt={scanResults.createdAt}
           close={() => setScanResults(null)}
-          onAdded={() => { setScanResults(null); refresh(); }}
+          onAdded={refresh}
         />
       )}
     </>
   );
 }
 
-type ScanMatch = { source: "candidate" | "team_member"; id: number; name: string; score: number; fit_label: string; bottom_line: string; strengths: string[]; gaps: string[]; alreadyLinked: boolean; archivedApplicationId: number | null; candidateArchived: boolean };
+type ScanMatch = {
+  source: "candidate" | "team_member"; id: number; name: string; score: number; fit_label: string; bottom_line: string;
+  strengths: string[]; gaps: string[]; alreadyLinked: boolean; archivedApplicationId: number | null; candidateArchived: boolean;
+  title: string; org: string; years: number | null; technologies: string[];
+};
 
-function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }: {
+function buildScanEmailText(jobTitle: string, client: string, picked: ScanMatch[]): string {
+  const items = picked.map((m, i) => {
+    const lines = [`${i + 1}. ${m.name} — ציון ${m.score}, ${m.fit_label}`, `   ${m.bottom_line}`];
+    if (m.strengths.length) lines.push(`   חוזקות: ${m.strengths.join("; ")}`);
+    if (m.gaps.length) lines.push(`   פערים: ${m.gaps.join("; ")}`);
+    return lines.join("\n");
+  }).join("\n\n");
+  return `היי צוות הגיוס,\n\nעברתי על מועמדים קיימים (כולל ארכיון) ועובדי צוות פנימיים מול המשרה "${jobTitle}" (${client}), ומצאתי כמה כיוונים שכדאי לבדוק לעומק:\n\n${items}\n\nאשמח לחוות דעתכם.`;
+}
+
+function ScanResultsModal({ jobId, jobTitle, jobClient, results, scanned, createdAt, close, onAdded }: {
   jobId: number;
   jobTitle: string;
+  jobClient: string;
   results: ScanMatch[];
   scanned: number;
+  createdAt?: string | null;
   close: () => void;
   onAdded: () => void;
 }) {
+  const [localResults, setLocalResults] = useState(results);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [emailText, setEmailText] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
   const keyOf = (m: ScanMatch) => `${m.source}:${m.id}`;
+
+  useEffect(() => { setLocalResults(results); }, [results]);
 
   function toggle(key: string) {
     setSelected(prev => {
@@ -1185,13 +1493,15 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
     });
   }
 
+  const selectedMatches = localResults.filter(m => selected.has(keyOf(m)));
+  const newToAdd = selectedMatches.filter(m => !m.alreadyLinked);
+
   async function addSelected() {
-    const toAdd = results.filter(m => selected.has(keyOf(m)) && !m.alreadyLinked);
-    if (toAdd.length === 0) return;
+    if (newToAdd.length === 0) return;
     setSaving(true);
     setSaveError("");
     try {
-      await Promise.all(toAdd.map(async (m) => {
+      await Promise.all(newToAdd.map(async (m) => {
         if (m.source === "team_member") {
           // Team members aren't linked directly — promote to a candidate record first, which also
           // creates the application to this job.
@@ -1219,6 +1529,10 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
           if (!r.ok) { const d = await r.json(); throw new Error(d.error || "שגיאה"); }
         }
       }));
+      // Mark the ones just added as linked locally — no need to close the modal or re-scan; the
+      // "prepare email text" action stays independently usable afterward.
+      const addedKeys = new Set(newToAdd.map(keyOf));
+      setLocalResults(prev => prev.map(m => (addedKeys.has(keyOf(m)) ? { ...m, alreadyLinked: true } : m)));
       onAdded();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "שגיאה בהוספת מועמדים");
@@ -1227,7 +1541,40 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
     }
   }
 
-  const newToAdd = results.filter(m => selected.has(keyOf(m)) && !m.alreadyLinked);
+  function prepareEmailText() {
+    setEmailText(buildScanEmailText(jobTitle, jobClient, selectedMatches));
+    setCopied(false);
+  }
+
+  async function copyEmailText() {
+    try {
+      await navigator.clipboard.writeText(emailText);
+      setCopied(true);
+    } catch { /* clipboard may be unavailable — text is still visible to copy manually */ }
+  }
+
+  async function sendChat() {
+    if (!chatInput.trim()) return;
+    const userMsg = chatInput.trim();
+    setChatInput("");
+    const newMessages = [...chatMessages, { role: "user" as const, text: userMsg }];
+    setChatMessages(newMessages);
+    setChatSending(true);
+    try {
+      const r = await fetch("/api/jobs/scan-candidates/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, messages: newMessages }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "שגיאה");
+      setChatMessages(prev => [...prev, { role: "assistant", text: d.reply }]);
+    } catch (e) {
+      setChatMessages(prev => [...prev, { role: "assistant", text: `שגיאה: ${e instanceof Error ? e.message : "לא ידוע"}` }]);
+    } finally {
+      setChatSending(false);
+    }
+  }
 
   return (
     <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) close(); }}>
@@ -1237,29 +1584,28 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
           <button onClick={close}>×</button>
         </div>
         <p className="scan-modal-subtitle">
-          נסרקו {scanned} (מועמדים בארכיון ופעילים + עובדי צוות) — <strong>{results.length}</strong> עם ציון 60 ומעלה.
-          {results.length > 0 && " סמן את מי שברצונך להוסיף למשרה."}
+          נסרקו {scanned} (מועמדים בארכיון ופעילים + עובדי צוות) — <strong>{localResults.length}</strong> עם ציון 60 ומעלה.
+          {createdAt && ` · סריקה מ-${formatDate(createdAt)}`}
+          {localResults.length > 0 && " סמן את מי שברצונך להוסיף למשרה ו/או לכלול בטקסט למייל."}
         </p>
-        {results.length === 0 ? (
+        {localResults.length === 0 ? (
           <p style={{ padding: "20px 24px", color: "var(--muted)" }}>לא נמצאו התאמות עם ציון 60 ומעלה.</p>
         ) : (
           <div className="scan-results-list">
-            {results.map(m => (
+            {localResults.map(m => (
               <div
                 key={keyOf(m)}
                 className={`scan-candidate-card${selected.has(keyOf(m)) ? " selected" : ""}${m.alreadyLinked ? " already-linked" : ""}`}
-                onClick={() => !m.alreadyLinked && toggle(keyOf(m))}
+                onClick={() => toggle(keyOf(m))}
               >
                 <div className="scan-card-top">
-                  {!m.alreadyLinked && (
-                    <input
-                      type="checkbox"
-                      checked={selected.has(keyOf(m))}
-                      onChange={() => toggle(keyOf(m))}
-                      onClick={e => e.stopPropagation()}
-                    />
-                  )}
-                  <strong className="scan-card-name">{m.name}</strong>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(keyOf(m))}
+                    onChange={() => toggle(keyOf(m))}
+                    onClick={e => e.stopPropagation()}
+                  />
+                  <PersonHoverCard info={scanMatchHoverInfo(m)}><strong className="scan-card-name">{m.name}</strong></PersonHoverCard>
                   <div className="scan-card-badges">
                     <b className={`score-text ${m.score >= 75 ? "" : "reasonable-score"}`}>{m.score}</b>
                     <span className={`pill ${m.fit_label === "מתאים" ? "success" : m.fit_label === "מתאים חלקית" ? "warning" : "neutral"}`}>
@@ -1290,14 +1636,56 @@ function ScanResultsModal({ jobId, jobTitle, results, scanned, close, onAdded }:
             ))}
           </div>
         )}
+        {emailText && (
+          <div className="scan-email-preview">
+            <div className="scan-email-preview-head">
+              <b>טקסט למייל צוות הגיוס</b>
+              <button className="secondary" onClick={copyEmailText}>{copied ? "✓ הועתק" : "העתקה"}</button>
+            </div>
+            <textarea readOnly value={emailText} />
+          </div>
+        )}
+        {chatOpen && (
+          <div className="scan-email-preview">
+            <div className="scan-email-preview-head">
+              <b>שאל את ה-AI על התוצאות</b>
+            </div>
+            <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--muted)" }}>
+              יש לו/ה גישה לכל מי שנסרק — כולל מי שלא עבר את סף הציון 60 ולכן לא מופיע/ה ברשימה למעלה. אפשר לשאול למשל "למה X לא נכנס/ה לרשימה".
+            </p>
+            {chatMessages.length > 0 && (
+              <div className="email-chat-history">
+                {chatMessages.map((m, i) => (
+                  <div key={i} className={`email-chat-msg ${m.role}`}>
+                    <pre>{m.text}</pre>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="email-chat-input">
+              <textarea
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                placeholder='למשל: "למה אלכסיי סרצה לא נכנס למומלצים למשרה?"'
+                rows={2}
+                onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendChat(); }}
+              />
+              <button className="ai-button" disabled={chatSending || !chatInput.trim()} onClick={sendChat}>
+                {chatSending ? "שולח..." : "✦ שליחה"}
+              </button>
+            </div>
+          </div>
+        )}
         {saveError && <div className="cv-message error" style={{ margin: "0 24px 8px" }}>{saveError}</div>}
         <div className="form-actions scan-modal-footer">
           <button className="secondary" onClick={close}>סגור</button>
-          {newToAdd.length > 0 && (
-            <button className="primary" disabled={saving} onClick={addSelected}>
-              {saving ? "מוסיף..." : `✦ הוסף ${newToAdd.length} למשרה`}
-            </button>
-          )}
+          <button className="secondary" onClick={() => setChatOpen(o => !o)}>💬 שאל את ה-AI על התוצאות</button>
+          <button className="secondary" disabled={selectedMatches.length === 0} onClick={prepareEmailText}>
+            ✉ הכן טקסט למייל{selectedMatches.length > 0 ? ` (${selectedMatches.length})` : ""}
+          </button>
+          <button className="primary" disabled={saving || newToAdd.length === 0} onClick={addSelected}>
+            {saving ? "מוסיף..." : `✦ הוסף למשרה${newToAdd.length > 0 ? ` (${newToAdd.length})` : ""}`}
+          </button>
         </div>
       </section>
     </div>
@@ -1447,9 +1835,10 @@ function CandidateTable({
                 <div className="person">
                   <span className={`avatar ${c.color}`}>{c.initials}</span>
                   <div>
-                    <strong>{c.name}</strong>
+                    <PersonHoverCard info={candidateHoverInfo(c)}><strong>{c.name}</strong></PersonHoverCard>
+                    {c.sourceTeamMemberId && <span className="pill neutral" style={{ marginRight: 6 }}>עובד צוות פנימי</span>}
                     <small>
-                      {c.company} · {c.years} שנות ניסיון
+                      {c.teamMemberClient || c.company} · {c.years} שנות ניסיון
                     </small>
                   </div>
                 </div>
@@ -1560,7 +1949,12 @@ function CandidatePage({
     [nextActionValue, setNextActionValue] = useState(c.nextAction),
     [nextActionDate, setNextActionDate] = useState(c.nextActionDate),
     [interviewDateValue, setInterviewDateValue] = useState(c.interview ? c.interview.slice(0, 16) : ""),
-    [savingInterviewDate, setSavingInterviewDate] = useState(false);
+    [savingInterviewDate, setSavingInterviewDate] = useState(false),
+    [refreshingCandidate, setRefreshingCandidate] = useState(false);
+  async function doRefresh() {
+    setRefreshingCandidate(true);
+    try { await refresh(); } finally { setRefreshingCandidate(false); }
+  }
   useEffect(
     () => setSummary(c.interviewSummary),
     [c.applicationId, c.interviewSummary],
@@ -1662,22 +2056,27 @@ function CandidatePage({
   return (
     <>
       <button className="crumb" onClick={back}>
-        מועמדים / <b>{c.name}</b>
+        מועמדים / <PersonHoverCard info={candidateHoverInfo(c)}><b>{c.name}</b></PersonHoverCard>
       </button>
       <section className="candidate-hero panel">
         <div className={`avatar hero-avatar ${c.color}`}>{c.initials}</div>
         <div className="hero-copy">
-          <h1>{c.name}</h1>
-          <p>{c.professionalTitle || "תפקיד מקצועי לא הוזן"}{c.company ? ` · ${c.company}` : ""}</p>
+          <h1><PersonHoverCard info={candidateHoverInfo(c)}>{c.name}</PersonHoverCard></h1>
+          <p>
+            {c.teamMemberRole || c.professionalTitle || "תפקיד מקצועי לא הוזן"}{(c.teamMemberClient || c.company) ? ` · ${c.teamMemberClient || c.company}` : ""}
+            {c.sourceTeamMemberId && <span className="pill neutral" style={{ marginRight: 8 }}>עובד צוות פנימי</span>}
+          </p>
           <div className="contact">
             <span>✉ {c.email || "לא הוזן"}</span>
             <span>☎ {c.phone || "לא הוזן"}</span>
             <span>↗ {c.linkedin ? "LinkedIn" : "לא הוזן LinkedIn"}</span>
           </div>
+          <PhotoUploader entity="candidate" id={c.id} hasPhoto={c.hasPhoto} onChange={refresh} />
         </div>
         <div className="hero-actions">
+          <RefreshButton onClick={doRefresh} busy={refreshingCandidate} title="רענון נתוני המועמד" />
           <button className="secondary" onClick={editCandidate}>
-            עריכת פרטי מועמד
+            {c.sourceTeamMemberId ? "עריכת פרטים (דרך ניהול צוות)" : "עריכת פרטי מועמד"}
           </button>
           {c.status === "נדחה" && c.evaluationFeedback?.startsWith("סיבת דחייה:") && (
             <div style={{background:"#fdecec",color:"#a43f3f",borderRadius:8,padding:"7px 12px",fontSize:12,maxWidth:260}}>{c.evaluationFeedback}</div>
@@ -1712,11 +2111,11 @@ function CandidatePage({
             <button className="secondary schedule-save" disabled={savingInterviewDate || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(interviewDateValue) || interviewDateValue === (c.interview ? c.interview.slice(0, 16) : "")} onClick={saveInterviewDate}>{savingInterviewDate ? "שומר..." : "✓ שמירת מועד"}</button>
             <small>אפשר לבחור או להקליד ידנית. השינוי נשמר רק בלחיצה.</small>
           </div>
-          <button className="archive-button" onClick={archive}>
-            ארכוב מועמדות
+          <button className="archive-button" onClick={archive} title="ארכוב המועמדות למשרה הנוכחית בלבד. המועמד נשאר פעיל למשרות אחרות.">
+            ארכוב מועמדות <span style={{fontSize:11,opacity:0.6}}>ⓘ</span>
           </button>
-          <button className="danger-text-button" onClick={removeCandidate}>
-            מחיקת מועמד
+          <button className="archive-button" onClick={removeCandidate} title="ארכוב המועמד וכל מועמדויותיו לכל המשרות. ניתן לשחזר מדף הארכיון.">
+            ארכוב מועמד מלא <span style={{fontSize:11,opacity:0.6}}>ⓘ</span>
           </button>
         </div>
       </section>
@@ -3786,15 +4185,20 @@ function ArchivePage({
   applications,
   restoreJob,
   restoreApplication,
+  deleteJob,
+  deleteApplication,
   refresh,
 }: {
   jobs: ArchivedJob[];
   applications: ArchivedApplication[];
   restoreJob: (id: number) => Promise<void>;
   restoreApplication: (id: number) => Promise<void>;
+  deleteJob: (id: number) => Promise<void>;
+  deleteApplication: (id: number) => Promise<void>;
   refresh: () => Promise<void>;
 }) {
   const [restoring, setRestoring] = useState("");
+  const [deleting, setDeleting] = useState("");
   async function restore(kind: "job" | "application", id: number) {
     setRestoring(`${kind}-${id}`);
     try {
@@ -3803,6 +4207,17 @@ function ArchivePage({
       await refresh();
     } finally {
       setRestoring("");
+    }
+  }
+  async function hardDelete(kind: "job" | "application", id: number, label: string) {
+    if (!confirm(`למחוק לצמיתות את "${label}"?\n\nפעולה זו אינה ניתנת לביטול.`)) return;
+    setDeleting(`${kind}-${id}`);
+    try {
+      if (kind === "job") await deleteJob(id);
+      else await deleteApplication(id);
+      await refresh();
+    } finally {
+      setDeleting("");
     }
   }
   return (
@@ -3814,7 +4229,10 @@ function ArchivePage({
           {jobs.map((job) => (
             <article className="archive-row" key={job.id}>
               <div><b>{job.title}</b><span>{job.client} · {job.status}</span></div>
-              <button className="secondary" disabled={restoring === `job-${job.id}`} onClick={() => restore("job", job.id)}>{restoring === `job-${job.id}` ? "משחזר..." : "שחזור משרה"}</button>
+              <div style={{display:"flex",gap:8,flexShrink:0}}>
+                <button className="secondary" disabled={restoring === `job-${job.id}` || !!deleting} onClick={() => restore("job", job.id)}>{restoring === `job-${job.id}` ? "משחזר..." : "שחזור"}</button>
+                <button className="danger-text-button" disabled={!!restoring || !!deleting} onClick={() => hardDelete("job", job.id, job.title)}>{deleting === `job-${job.id}` ? "מוחק..." : "מחיקה לצמיתות"}</button>
+              </div>
             </article>
           ))}
           {!jobs.length && <div className="archive-empty">אין משרות בארכיון</div>}
@@ -3824,17 +4242,20 @@ function ArchivePage({
           {applications.map((application) => (
             <article className="archive-row" key={application.applicationId}>
               <div>
-                <b>{application.candidateName}</b>
+                <PersonHoverCard info={archivedAppHoverInfo(application)}><b>{application.candidateName}</b></PersonHoverCard>
                 <span>{application.role} · {application.client} · {application.status}</span>
                 {(application as any).rejectionReason && <span style={{color:"var(--orange)",fontSize:11,display:"block",marginTop:2}}>{(application as any).rejectionReason}</span>}
               </div>
-              <button className="secondary" disabled={restoring === `application-${application.applicationId}`} onClick={() => restore("application", application.applicationId)}>{restoring === `application-${application.applicationId}` ? "משחזר..." : "שחזור מועמדות"}</button>
+              <div style={{display:"flex",gap:8,flexShrink:0}}>
+                <button className="secondary" disabled={restoring === `application-${application.applicationId}` || !!deleting} onClick={() => restore("application", application.applicationId)}>{restoring === `application-${application.applicationId}` ? "משחזר..." : "שחזור"}</button>
+                <button className="danger-text-button" disabled={!!restoring || !!deleting} onClick={() => hardDelete("application", application.applicationId, `${application.candidateName} • ${application.role}`)}>{deleting === `application-${application.applicationId}` ? "מוחק..." : "מחיקה לצמיתות"}</button>
+              </div>
             </article>
           ))}
           {!applications.length && <div className="archive-empty">אין מועמדויות בארכיון</div>}
         </section>
       </div>
-      <div className="privacy-note">העברה לארכיון אינה מוחקת מידע. מחיקה לצמיתות מתבצעת רק באמצעות פעולת מחיקה מפורשת.</div>
+      <div className="privacy-note">הארכיון שומר את כל הנתונים. ניתן לשחזר בכל עת.</div>
     </>
   );
 }
@@ -3907,6 +4328,17 @@ function UsageGuide({ setView }: { setView: (v: View) => void }) {
               בטאב ״הוראות AI״ (Admin) אפשר לצפות ולערוך את כל הכללים שמנחים כל פעולת AI במערכת,
               מקובצים לפי אזור (מועמדים / משרות / ניהול צוות / שאילתות כלליות). שינוי נשמר מיד ומשפיע
               על הפעלות הבאות בלבד. טאב ״פעילות AI ועלויות״ מציג את כל היסטוריית הקריאות עם עלות משוערת.
+            </p>
+          </div>
+        </section>
+        <section className="panel guide-rule">
+          <span className="rule-icon purple">◉</span>
+          <div>
+            <h2>אין מחיקה לצמיתות מהממשק הראשי</h2>
+            <p>
+              מחיקת מועמד, מועמדות או משרה מהממשק הרגיל מעבירה לארכיון בלבד — לא מוחקת. מדף הארכיון
+              אפשר לשחזר בכל עת, או למחוק לצמיתות (עם אישור). בנוסף, גיבוי יומי אוטומטי של בסיס
+              הנתונים נשמר בתיקיית backups/ כקבצי .sql.gz — שכבת הגנה נוספת גם אחרי מחיקה מהארכיון.
             </p>
           </div>
         </section>
@@ -3989,6 +4421,7 @@ type TeamMember = {
   id:number; name:string; notes:string; targetJobIds:number[]; actions:string[];
   aiInsight:TeamAiInsight; aiInsightUpdatedAt:string|null; createdAt:string;
   role:string; client:string; nayaStartDate:string|null; nextStepSummary:string; lastMeetingDate:string|null;
+  hasPhoto:boolean;
 };
 type TeamMeeting = {id:number;memberId:number;meetingDate:string;summary:string;actionItems:string[];createdAt:string};
 // Tenure at NAYA, derived live from a join date — never stored, so it never goes stale.
@@ -4092,7 +4525,7 @@ function TeamMemberCard({ member, jobs, onEdit, onDelete, onRefresh }: {
   return (
     <>
     <tr className="team-row" onClick={()=>setOpen(o=>!o)}>
-      <td><b>{member.name}</b></td>
+      <td><PersonHoverCard info={teamHoverInfo(member)}><b>{member.name}</b></PersonHoverCard></td>
       <td>{member.role || "—"}</td>
       <td>{member.client || "—"}</td>
       <td>{formatTenure(member.nayaStartDate)}</td>
@@ -4290,7 +4723,7 @@ function PromoteTab({ member, jobs }: { member: TeamMember; jobs: Job[] }) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div className="cv-message success">
-          <b>✓ {member.name} קודם/ה בהצלחה כמועמד/ת!</b>
+          <b>✓ <PersonHoverCard info={teamHoverInfo(member)}>{member.name}</PersonHoverCard> קודם/ה בהצלחה כמועמד/ת!</b>
           <div style={{ fontSize: 13, marginTop: 4 }}>
             {created > 0 && <div>נוצרו {created} מועמדויות חדשות.</div>}
             {skipped > 0 && <div style={{ color: "var(--muted)" }}>{skipped} מועמדויות כבר קיימות — לא שוכפלו.</div>}
@@ -4319,7 +4752,7 @@ function PromoteTab({ member, jobs }: { member: TeamMember; jobs: Job[] }) {
       <div style={{ background: "#f8f7ff", border: "1px solid #dcd7fa", borderRadius: 9, padding: 12, fontSize: 13, color: "#58506f" }}>
         <b>מה קורה כשמקדמים עובד כמועמד?</b>
         <div style={{ marginTop: 6, lineHeight: 1.7 }}>
-          ה-AI ייצור כרטיס מועמד מתוך הפרופיל וסיכומי הפגישות של {member.name}.
+          ה-AI ייצור כרטיס מועמד מתוך הפרופיל וסיכומי הפגישות של <PersonHoverCard info={teamHoverInfo(member)}>{member.name}</PersonHoverCard>.
           אם כרטיס על שם זה כבר קיים — יעודכן. המועמד יצורף למשרות שבחרת וימצא בטאב <b>מועמדים</b>.
         </div>
       </div>
@@ -4358,7 +4791,7 @@ function PromoteTab({ member, jobs }: { member: TeamMember; jobs: Job[] }) {
 
 const EMPTY_TEAM_FORM = {name:"",notes:"",role:"",client:"",nayaStartDate:"",nextStepSummary:""};
 type TeamSortField = "name"|"role"|"client"|"tenure"|"nextStep"|"lastMeeting"|"aiUpdated";
-function TeamPage({ jobs }: { jobs: Job[] }) {
+function TeamPage({ jobs, pendingEditId, onConsumePendingEdit }: { jobs: Job[]; pendingEditId?: number | null; onConsumePendingEdit?: () => void }) {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -4366,6 +4799,22 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
   const [editMember, setEditMember] = useState<TeamMember|null>(null);
   const [form, setForm] = useState(EMPTY_TEAM_FORM);
   const [rawText, setRawText] = useState(""), [extracting, setExtracting] = useState(false), [extractErr, setExtractErr] = useState("");
+  const formRef = useRef<HTMLElement>(null);
+  // The form renders above the table — on a long member list, opening it via a row's "עריכה"
+  // button (far down the page) is invisible unless we scroll it into view.
+  useEffect(() => { if (showForm || editMember) formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }, [showForm, editMember]);
+  // Arriving here from a promoted candidate's "edit" button (see sourceTeamMemberId) — open that
+  // member's edit form directly instead of making the recruiter find the row themselves.
+  useEffect(() => {
+    if (!pendingEditId || !loaded) return;
+    const m = members.find(x => x.id === pendingEditId);
+    if (m) {
+      setEditMember(m);
+      setForm({ name: m.name, notes: m.notes, role: m.role, client: m.client, nayaStartDate: m.nayaStartDate || "", nextStepSummary: m.nextStepSummary });
+      setShowForm(false);
+    }
+    onConsumePendingEdit?.();
+  }, [pendingEditId, loaded, members, onConsumePendingEdit]);
   const [sortField, setSortField] = useState<TeamSortField>("name");
   const [sortDir, setSortDir] = useState<1|-1>(1);
   function toggleSort(f: TeamSortField) { if (sortField===f) setSortDir(d=>d===1?-1:1); else { setSortField(f); setSortDir(1); } }
@@ -4385,11 +4834,16 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
     return valueOf(a).localeCompare(valueOf(b), "he", { numeric: true }) * sortDir;
   });
 
+  const [refreshingMembers, setRefreshingMembers] = useState(false);
   useEffect(() => { fetchMembers(); }, []);
   async function fetchMembers() {
     const r = await fetch("/api/team"); const d = await r.json();
     if (r.ok) setMembers(d.members || []);
     setLoaded(true);
+  }
+  async function doRefreshMembers() {
+    setRefreshingMembers(true);
+    try { await fetchMembers(); } finally { setRefreshingMembers(false); }
   }
   async function saveMember() {
     const body = editMember ? {...form,id:editMember.id} : form;
@@ -4425,11 +4879,19 @@ function TeamPage({ jobs }: { jobs: Job[] }) {
   return (
     <>
       <Heading title="ניהול צוות" subtitle="מעקב אחר עובדים — פגישות 1:1, ציר זמן, ניתוח AI והתאמת משרות." action={
-        <button className="primary" onClick={()=>{setShowForm(true);setEditMember(null);setForm(EMPTY_TEAM_FORM);setRawText("");setFormTab("manual");}}>＋ עובד חדש</button>
+        <>
+          <RefreshButton onClick={doRefreshMembers} busy={refreshingMembers} title="רענון רשימת הצוות" />
+          <button className="primary" onClick={()=>{setShowForm(true);setEditMember(null);setForm(EMPTY_TEAM_FORM);setRawText("");setFormTab("manual");}}>＋ עובד חדש</button>
+        </>
       } />
       {(showForm || editMember) && (
-        <section className="panel content-card" style={{marginBottom:14}}>
+        <section ref={formRef} className="panel content-card" style={{marginBottom:14}}>
           <h2>{editMember?"עריכת עובד":"הוספת עובד חדש"}</h2>
+          {editMember && (
+            <div style={{marginBottom:12}}>
+              <PhotoUploader entity="team" id={editMember.id} hasPhoto={editMember.hasPhoto} onChange={fetchMembers} />
+            </div>
+          )}
           {!editMember && (
             <div style={{display:"flex",gap:6,marginBottom:12}}>
               <button className={`secondary${formTab==="manual"?" active":""}`} style={formTab==="manual"?{borderColor:"var(--purple)",background:"#f2f0ff",color:"var(--purple)"}:{}} onClick={()=>setFormTab("manual")}>הזנה ידנית</button>

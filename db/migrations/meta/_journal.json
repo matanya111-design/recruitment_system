@@ -43,6 +43,27 @@
       "when": 1790277746904,
       "tag": "0005_modern_brother_voodoo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790500413161,
+      "tag": "0006_left_manta",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790502659528,
+      "tag": "0007_brown_pestilence",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790507554197,
+      "tag": "0008_lazy_lady_mastermind",
+      "breakpoints": true
     }
   ]
 }

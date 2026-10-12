@@ -9,6 +9,7 @@ import { aiActivityLogs } from "@/db/schema";
 import { sql } from "drizzle-orm";
 import { TEAM_INSIGHT_INSTRUCTIONS } from "@/lib/ai/team-prompts";
 import { getPrompt } from "@/lib/ai/get-prompt";
+import { normalizeStringArray } from "@/lib/ai/normalize";
 
 const insightSchema = {
   type: "object", additionalProperties: false,
@@ -80,7 +81,12 @@ export async function POST(request: Request) {
       reasoningEffort: "medium",
     });
 
-    const insight = result.data;
+    const insight: InsightResult = {
+      ...result.data,
+      strengths: normalizeStringArray(result.data.strengths),
+      gaps: normalizeStringArray(result.data.gaps),
+      next_steps: normalizeStringArray(result.data.next_steps),
+    };
 
     // Save to DB regardless of client state
     await db.execute(sql`UPDATE team_members SET ai_insight=${JSON.stringify(insight)}, ai_insight_updated_at=NOW() WHERE id=${memberId}`);
